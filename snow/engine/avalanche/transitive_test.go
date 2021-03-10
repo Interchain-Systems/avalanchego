@@ -276,7 +276,9 @@ func TestEngineQuery(t *testing.T) {
 			t.Fatalf("Sent multiple chits")
 		}
 		*chitted = true
-		if len(prefs) != 1 || prefs[0] != vtx0.ID() {
+		prefSet := ids.Set{}
+		prefSet.Add(prefs...)
+		if len(prefs) != 1 || !prefSet.Contains(vtx0.ID()) {
 			t.Fatalf("Wrong chits preferences")
 		}
 	}
@@ -339,7 +341,8 @@ func TestEngineQuery(t *testing.T) {
 		}
 	}
 
-	if err := te.Chits(vdr, *queryRequestID, []ids.ID{vtx1.ID()}); err != nil {
+	s := []ids.ID{vtx1.ID()}
+	if err := te.Chits(vdr, *queryRequestID, s); err != nil {
 		t.Fatal(err)
 	}
 
@@ -556,7 +559,6 @@ func TestEngineMultipleQuery(t *testing.T) {
 	}
 
 	s0 := []ids.ID{vtx0.ID(), vtx1.ID()}
-
 	s2 := []ids.ID{vtx0.ID()}
 
 	if err := te.Chits(vdr0, *queryRequestID, s0); err != nil {

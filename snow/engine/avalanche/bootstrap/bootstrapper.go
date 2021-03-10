@@ -104,10 +104,10 @@ func (b *Bootstrapper) CurrentAcceptedFrontier() []ids.ID {
 	return b.Manager.Edge()
 }
 
-// FilterAccepted returns the IDs of vertices in [containerIDs] that this node has accepted
-func (b *Bootstrapper) FilterAccepted(containerIDs []ids.ID) []ids.ID {
-	acceptedVtxIDs := make([]ids.ID, 0, len(containerIDs))
-	for _, vtxID := range containerIDs {
+// FilterAccepted returns the IDs of vertices in [vtxIDs] that this node has accepted
+func (b *Bootstrapper) FilterAccepted(vtxIDs []ids.ID) []ids.ID {
+	acceptedVtxIDs := make([]ids.ID, 0, len(vtxIDs))
+	for _, vtxID := range vtxIDs {
 		if vtx, err := b.Manager.GetVertex(vtxID); err == nil && vtx.Status() == choices.Accepted {
 			acceptedVtxIDs = append(acceptedVtxIDs, vtxID)
 		}

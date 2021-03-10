@@ -91,7 +91,8 @@ func (b *Bootstrapper) Initialize(
 
 // CurrentAcceptedFrontier returns the last accepted block
 func (b *Bootstrapper) CurrentAcceptedFrontier() []ids.ID {
-	acceptedFrontier := []ids.ID{b.VM.LastAccepted()}
+	acceptedFrontier := make([]ids.ID, 1)
+	acceptedFrontier[0] = b.VM.LastAccepted()
 	return acceptedFrontier
 }
 

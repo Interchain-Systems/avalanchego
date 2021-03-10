@@ -25,16 +25,16 @@ func Aliases(genesisBytes []byte) (map[string][]string, map[ids.ID][]string, map
 		"bc/" + constants.PlatformChainID.String(): {"P", "platform", "bc/P", "bc/platform"},
 	}
 	chainAliases := map[ids.ID][]string{
-		constants.PlatformChainID: {"P", "platform"},
+		constants.PlatformChainID.Key(): {"P", "platform"},
 	}
 	vmAliases := map[ids.ID][]string{
-		platformvm.ID:  {"platform"},
-		avm.ID:         {"avm"},
-		evm.ID:         {"evm"},
-		timestampvm.ID: {"timestamp"},
-		secp256k1fx.ID: {"secp256k1fx"},
-		nftfx.ID:       {"nftfx"},
-		propertyfx.ID:  {"propertyfx"},
+		platformvm.ID.Key():  {"platform"},
+		avm.ID.Key():         {"avm"},
+		EVMID.Key():          {"evm"},
+		timestampvm.ID.Key(): {"timestamp"},
+		secp256k1fx.ID.Key(): {"secp256k1fx"},
+		nftfx.ID.Key():       {"nftfx"},
+		propertyfx.ID.Key():  {"propertyfx"},
 	}
 
 	genesis := &platformvm.Genesis{} // TODO let's not re-create genesis to do aliasing

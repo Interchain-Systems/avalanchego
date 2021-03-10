@@ -611,13 +611,13 @@ func (n *network) PullQuery(validatorIDs ids.ShortSet, chainID ids.ID, requestID
 
 // Chits implements the Sender interface.
 // assumes the stateLock is not held.
-func (n *network) Chits(validatorID ids.ShortID, chainID ids.ID, requestID uint32, votes []ids.ID) {
-	msg, err := n.b.Chits(chainID, requestID, votes)
+func (n *network) Chits(validatorID ids.ShortID, chainID ids.ID, requestID uint32, containerIDs []ids.ID) {
+	msg, err := n.b.Chits(chainID, requestID, containerIDs)
 	if err != nil {
 		n.log.Error("failed to build Chits(%s, %d, %s): %s",
 			chainID,
 			requestID,
-			votes,
+			containerIDs,
 			err)
 		return
 	}
@@ -628,7 +628,7 @@ func (n *network) Chits(validatorID ids.ShortID, chainID ids.ID, requestID uint3
 			validatorID,
 			chainID,
 			requestID,
-			votes)
+			containerIDs)
 		n.chits.numFailed.Inc()
 	} else {
 		n.chits.numSent.Inc()

@@ -29,7 +29,7 @@ type rcLock struct {
 type Memory struct {
 	lock  sync.Mutex
 	log   logging.Logger
-	codec codec.Manager
+	codec codec.Codec
 	locks map[ids.ID]*rcLock
 	db    database.Database
 }
@@ -43,7 +43,7 @@ func (m *Memory) Initialize(log logging.Logger, db database.Database) error {
 	}
 
 	m.log = log
-	m.codec = manager
+	m.codec = codec.NewDefault()
 	m.locks = make(map[ids.ID]*rcLock)
 	m.db = db
 	return nil

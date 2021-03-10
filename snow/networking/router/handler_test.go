@@ -27,7 +27,7 @@ func TestHandlerDropsTimedOutMessages(t *testing.T) {
 		return nil
 	}
 
-	engine.GetAcceptedF = func(validatorID ids.ShortID, requestID uint32, containerIDs []ids.ID) error {
+	engine.GetAcceptedF = func(validatorID ids.ShortID, requestID uint32, _ []ids.ID) error {
 		called <- struct{}{}
 		return nil
 	}

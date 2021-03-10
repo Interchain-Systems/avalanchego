@@ -254,7 +254,7 @@ func TestEngineQuery(t *testing.T) {
 		if len(prefSet) != 1 {
 			t.Fatal("Should only be one vote")
 		}
-		if blk.ID() != prefSet[0] {
+		if !blk.ID().Equals(prefSet[0]) {
 			t.Fatalf("Wrong chits block")
 		}
 	}
@@ -763,7 +763,8 @@ func TestEnginePushQuery(t *testing.T) {
 		if len(votes) != 1 {
 			t.Fatal("votes should only have one element")
 		}
-		if blk.ID() != votes[0] {
+		vote := votes[0]
+		if !blk.ID().Equals(vote) {
 			t.Fatalf("Asking for wrong block")
 		}
 	}

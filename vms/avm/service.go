@@ -452,7 +452,7 @@ func (service *Service) CreateAsset(r *http.Request, args *CreateAssetArgs, repl
 		utxos,
 		kc,
 		map[ids.ID]uint64{
-			service.vm.ctx.AVAXAssetID: service.vm.creationTxFee,
+			avaxKey: service.vm.creationTxFee,
 		},
 	)
 	if err != nil {
@@ -490,6 +490,117 @@ func (service *Service) CreateAsset(r *http.Request, args *CreateAssetArgs, repl
 				Addrs:     []ids.ShortID{addr},
 			},
 		})
+	}
+	initialState.Sort(service.vm.codec)
+
+	tx := Tx{UnsignedTx: &CreateAssetTx{
+		BaseTx: BaseTx{BaseTx: avax.BaseTx{
+			NetworkID:    service.vm.ctx.NetworkID,
+			BlockchainID: service.vm.ctx.ChainID,
+			Outs:         outs,
+			Ins:          ins,
+		}},
+		Name:         args.Name,
+		Symbol:       args.Symbol,
+		Denomination: args.Denomination,
+		States:       []*InitialState{initialState},
+	}}
+	if err := tx.SignSECP256K1Fx(service.vm.codec, keys); err != nil {
+		return err
+	}
+
+	assetID, err := service.vm.IssueTx(tx.Bytes())
+	if err != nil {
+		return fmt.Errorf("problem issuing transaction: %w", err)
+	}
+
+	reply.AssetID = assetID
+	reply.ChangeAddr, err = service.vm.FormatLocalAddress(changeAddr)
+	return err
+}
+
+// CreateVariableCapAssetArgs are arguments for passing into CreateVariableCapAsset requests
+type CreateVariableCapAssetArgs struct {
+	api.JSONSpendHeader          // User, password, from addrs, change addr
+	Name                string   `json:"name"`
+	Symbol              string   `json:"symbol"`
+	Denomination        byte     `json:"denomination"`
+	MinterSets          []Owners `json:"minterSets"`
+}
+
+// Owners describes who can perform an action
+type Owners struct {
+	Threshold json.Uint32 `json:"threshold"`
+	Minters   []string    `json:"minters"`
+}
+
+// CreateVariableCapAsset returns ID of the newly created asset
+func (service *Service) CreateVariableCapAsset(r *http.Request, args *CreateVariableCapAssetArgs, reply *AssetIDChangeAddr) error {
+	service.vm.ctx.Log.Info("AVM: CreateVariableCapAsset called with name: %s symbol: %s number of minters: %d",
+		args.Name,
+		args.Symbol,
+		len(args.MinterSets),
+	)
+
+	if len(args.MinterSets) == 0 {
+		return errNoMinters
+	}
+
+	// Parse the from addresses
+	fromAddrs := ids.ShortSet{}
+	for _, addrStr := range args.From {
+		addr, err := service.vm.ParseLocalAddress(addrStr)
+		if err != nil {
+			return fmt.Errorf("couldn't parse 'from' address %s: %w", addrStr, err)
+		}
+		fromAddrs.Add(addr)
+	}
+
+	// Get the UTXOs/keys for the from addresses
+	utxos, kc, err := service.vm.LoadUser(args.Username, args.Password, fromAddrs)
+	if err != nil {
+		return err
+	}
+
+	// Parse the change address.
+	if len(kc.Keys) == 0 {
+		return errNoKeys
+	}
+	changeAddr, err := service.vm.selectChangeAddr(kc.Keys[0].PublicKey().Address(), args.ChangeAddr)
+	if err != nil {
+		return err
+	}
+
+	avaxKey := service.vm.ctx.AVAXAssetID.Key()
+	amountsSpent, ins, keys, err := service.vm.Spend(
+		utxos,
+		kc,
+		map[ids.ID]uint64{
+			avaxKey: service.vm.creationTxFee,
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	outs := []*avax.TransferableOutput{}
+	if amountSpent := amountsSpent[avaxKey]; amountSpent > service.vm.creationTxFee {
+		outs = append(outs, &avax.TransferableOutput{
+			Asset: avax.Asset{ID: service.vm.ctx.AVAXAssetID},
+			Out: &secp256k1fx.TransferOutput{
+				Amt: amountSpent - service.vm.creationTxFee,
+				OutputOwners: secp256k1fx.OutputOwners{
+					Locktime:  0,
+					Threshold: 1,
+					Addrs:     []ids.ShortID{changeAddr},
+				},
+			},
+		})
+	}
+
+	initialState := &InitialState{
+		FxID: 0, // TODO: Should lookup secp256k1fx FxID
+		Outs: make([]verify.State, 0, len(args.MinterSets)),
 	}
 	for _, owner := range args.MinterSets {
 		minter := &secp256k1fx.MintOutput{
@@ -607,7 +718,7 @@ func (service *Service) CreateNFTAsset(r *http.Request, args *CreateNFTAssetArgs
 		utxos,
 		kc,
 		map[ids.ID]uint64{
-			service.vm.ctx.AVAXAssetID: service.vm.creationTxFee,
+			avaxKey: service.vm.creationTxFee,
 		},
 	)
 	if err != nil {
@@ -991,8 +1102,8 @@ func (service *Service) SendMultiple(r *http.Request, args *SendMultipleArgs, re
 	}
 
 	amountsWithFee := make(map[ids.ID]uint64, len(amounts)+1)
-	for assetID, amount := range amounts {
-		amountsWithFee[assetID] = amount
+	for assetKey, amount := range amounts {
+		amountsWithFee[assetKey] = amount
 	}
 
 	amountWithFee, err := safemath.Add64(amounts[service.vm.ctx.AVAXAssetID], service.vm.txFee)
@@ -1106,7 +1217,7 @@ func (service *Service) Mint(r *http.Request, args *MintArgs, reply *api.JSONTxI
 		feeUTXOs,
 		feeKc,
 		map[ids.ID]uint64{
-			service.vm.ctx.AVAXAssetID: service.vm.txFee,
+			avaxKey: service.vm.txFee,
 		},
 	)
 	if err != nil {
@@ -1138,7 +1249,7 @@ func (service *Service) Mint(r *http.Request, args *MintArgs, reply *api.JSONTxI
 		utxos,
 		kc,
 		map[ids.ID]uint64{
-			assetID: uint64(args.Amount),
+			assetID.Key(): uint64(args.Amount),
 		},
 		to,
 	)
@@ -1223,7 +1334,7 @@ func (service *Service) SendNFT(r *http.Request, args *SendNFTArgs, reply *api.J
 		utxos,
 		kc,
 		map[ids.ID]uint64{
-			service.vm.ctx.AVAXAssetID: service.vm.txFee,
+			avaxKey: service.vm.txFee,
 		},
 	)
 	if err != nil {
@@ -1339,7 +1450,7 @@ func (service *Service) MintNFT(r *http.Request, args *MintNFTArgs, reply *api.J
 		feeUTXOs,
 		feeKc,
 		map[ids.ID]uint64{
-			service.vm.ctx.AVAXAssetID: service.vm.txFee,
+			avaxKey: service.vm.txFee,
 		},
 	)
 	if err != nil {
@@ -1455,13 +1566,14 @@ func (service *Service) Import(_ *http.Request, args *ImportArgs, reply *api.JSO
 	ins := []*avax.TransferableInput{}
 	keys := [][]*crypto.PrivateKeySECP256K1R{}
 
-	if amountSpent := amountsSpent[service.vm.ctx.AVAXAssetID]; amountSpent < service.vm.txFee {
+	avaxKey := service.vm.ctx.AVAXAssetID.Key()
+	if amountSpent := amountsSpent[avaxKey]; amountSpent < service.vm.txFee {
 		var localAmountsSpent map[ids.ID]uint64
 		localAmountsSpent, ins, keys, err = service.vm.Spend(
 			utxos,
 			kc,
 			map[ids.ID]uint64{
-				service.vm.ctx.AVAXAssetID: service.vm.txFee - amountSpent,
+				avaxKey: service.vm.txFee - amountSpent,
 			},
 		)
 		if err != nil {
@@ -1599,7 +1711,8 @@ func (service *Service) Export(_ *http.Request, args *ExportArgs, reply *api.JSO
 	}
 
 	amounts := map[ids.ID]uint64{}
-	if assetID == service.vm.ctx.AVAXAssetID {
+	avaxKey := service.vm.ctx.AVAXAssetID.Key()
+	if assetID.Equals(service.vm.ctx.AVAXAssetID) {
 		amountWithFee, err := safemath.Add64(uint64(args.Amount), service.vm.txFee)
 		if err != nil {
 			return fmt.Errorf("problem calculating required spend amount: %w", err)

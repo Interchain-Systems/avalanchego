@@ -224,7 +224,7 @@ func TestBootstrapperByzantineResponses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	acceptedIDs := []ids.ID{vtxID1}
+	acceptedIDs := []ids.ID{vtx1.ID()}
 
 	manager.GetVertexF = func(vtxID ids.ID) (avalanche.Vertex, error) {
 		switch vtxID {

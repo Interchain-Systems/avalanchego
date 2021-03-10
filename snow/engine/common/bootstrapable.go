@@ -12,7 +12,6 @@ type Bootstrapable interface {
 	// Returns the set of containerIDs that are accepted, but have no accepted
 	// children.
 	CurrentAcceptedFrontier() []ids.ID
-
 	// Returns the subset of containerIDs that are accepted by this chain.
 	FilterAccepted(containerIDs []ids.ID) (acceptedContainerIDs []ids.ID)
 

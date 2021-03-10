@@ -60,8 +60,8 @@ func (m Builder) GetAcceptedFrontier(chainID ids.ID, requestID uint32, deadline 
 func (m Builder) AcceptedFrontier(chainID ids.ID, requestID uint32, containerIDs []ids.ID) (Msg, error) {
 	containerIDBytes := make([][]byte, len(containerIDs))
 	for i, containerID := range containerIDs {
-		copy := containerID
-		containerIDBytes[i] = copy[:]
+		copied := containerID
+		containerIDBytes[i] = copied[:]
 	}
 	return m.Pack(AcceptedFrontier, map[Field]interface{}{
 		ChainID:      chainID[:],
@@ -74,8 +74,8 @@ func (m Builder) AcceptedFrontier(chainID ids.ID, requestID uint32, containerIDs
 func (m Builder) GetAccepted(chainID ids.ID, requestID uint32, deadline uint64, containerIDs []ids.ID) (Msg, error) {
 	containerIDBytes := make([][]byte, len(containerIDs))
 	for i, containerID := range containerIDs {
-		copy := containerID
-		containerIDBytes[i] = copy[:]
+		copied := containerID
+		containerIDBytes[i] = copied[:]
 	}
 	return m.Pack(GetAccepted, map[Field]interface{}{
 		ChainID:      chainID[:],
@@ -89,8 +89,8 @@ func (m Builder) GetAccepted(chainID ids.ID, requestID uint32, deadline uint64, 
 func (m Builder) Accepted(chainID ids.ID, requestID uint32, containerIDs []ids.ID) (Msg, error) {
 	containerIDBytes := make([][]byte, len(containerIDs))
 	for i, containerID := range containerIDs {
-		copy := containerID
-		containerIDBytes[i] = copy[:]
+		copied := containerID
+		containerIDBytes[i] = copied[:]
 	}
 	return m.Pack(Accepted, map[Field]interface{}{
 		ChainID:      chainID[:],
@@ -163,8 +163,8 @@ func (m Builder) PullQuery(chainID ids.ID, requestID uint32, deadline uint64, co
 func (m Builder) Chits(chainID ids.ID, requestID uint32, containerIDs []ids.ID) (Msg, error) {
 	containerIDBytes := make([][]byte, len(containerIDs))
 	for i, containerID := range containerIDs {
-		copy := containerID
-		containerIDBytes[i] = copy[:]
+		copied := containerID
+		containerIDBytes[i] = copied[:]
 	}
 	return m.Pack(Chits, map[Field]interface{}{
 		ChainID:      chainID[:],

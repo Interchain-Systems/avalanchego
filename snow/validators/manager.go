@@ -46,8 +46,6 @@ type manager struct {
 	// Key: Subnet ID
 	// Value: The validators that validate the subnet
 	subnetToVdrs map[ids.ID]Set
-
-	maskedVdrs ids.ShortSet
 }
 
 func (m *manager) Set(subnetID ids.ID, newSet Set) error {

@@ -80,7 +80,7 @@ func (b *Bootstrapper) Startup() error {
 	b.started = true
 	if b.pendingAcceptedFrontier.Len() == 0 {
 		b.Ctx.Log.Info("Bootstrapping skipped due to no provided bootstraps")
-		return b.Bootstrapable.ForceAccepted(nil)
+		return b.Bootstrapable.ForceAccepted([]ids.ID{})
 	}
 
 	// Ask each of the bootstrap validators to send their accepted frontier

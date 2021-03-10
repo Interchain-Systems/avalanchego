@@ -609,7 +609,7 @@ func TestBootstrapperAcceptedFrontier(t *testing.T) {
 	if len(accepted) != 1 {
 		t.Fatalf("Only one block should be accepted")
 	}
-	if accepted[0] != blkID {
+	if !accepted[0].Equals(blkID) {
 		t.Fatalf("Blk should be accepted")
 	}
 }
