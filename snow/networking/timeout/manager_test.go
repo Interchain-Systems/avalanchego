@@ -18,7 +18,7 @@ import (
 func TestManagerFire(t *testing.T) {
 	manager := Manager{}
 	benchlist := benchlist.NewNoBenchlist()
-	manager.Initialize(&timer.AdaptiveTimeoutConfig{
+	err := manager.Initialize(&timer.AdaptiveTimeoutConfig{
 		InitialTimeout: time.Millisecond,
 		MinimumTimeout: time.Millisecond,
 		MaximumTimeout: 10 * time.Second,
@@ -27,12 +27,15 @@ func TestManagerFire(t *testing.T) {
 		Namespace:      "",
 		Registerer:     prometheus.NewRegistry(),
 	}, benchlist)
+	if err != nil {
+		t.Fatal(err)
+	}
 	go manager.Dispatch()
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 
-	manager.Register(ids.NewShortID([20]byte{}), ids.NewID([32]byte{}), 0, true, 0, wg.Done)
+	manager.Register(ids.NewShortID([20]byte{}), ids.ID{}, 0, true, 0, wg.Done)
 
 	wg.Wait()
 }
@@ -40,7 +43,7 @@ func TestManagerFire(t *testing.T) {
 func TestManagerCancel(t *testing.T) {
 	manager := Manager{}
 	benchlist := benchlist.NewNoBenchlist()
-	manager.Initialize(&timer.AdaptiveTimeoutConfig{
+	err := manager.Initialize(&timer.AdaptiveTimeoutConfig{
 		InitialTimeout: time.Millisecond,
 		MinimumTimeout: time.Millisecond,
 		MaximumTimeout: 10 * time.Second,
@@ -49,6 +52,9 @@ func TestManagerCancel(t *testing.T) {
 		Namespace:      "",
 		Registerer:     prometheus.NewRegistry(),
 	}, benchlist)
+	if err != nil {
+		t.Fatal(err)
+	}
 	go manager.Dispatch()
 
 	wg := sync.WaitGroup{}
@@ -56,11 +62,11 @@ func TestManagerCancel(t *testing.T) {
 
 	fired := new(bool)
 
-	manager.Register(ids.NewShortID([20]byte{}), ids.NewID([32]byte{}), 0, true, 0, func() { *fired = true })
+	manager.Register(ids.NewShortID([20]byte{}), ids.ID{}, 0, true, 0, func() { *fired = true })
 
-	manager.Cancel(ids.NewShortID([20]byte{}), ids.NewID([32]byte{}), 0)
+	manager.Cancel(ids.NewShortID([20]byte{}), ids.ID{}, 0)
 
-	manager.Register(ids.NewShortID([20]byte{}), ids.NewID([32]byte{}), 1, true, 0, wg.Done)
+	manager.Register(ids.NewShortID([20]byte{}), ids.ID{}, 1, true, 0, wg.Done)
 
 	wg.Wait()
 

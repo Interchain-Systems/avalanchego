@@ -1,3 +1,6 @@
+// (c) 2019-2020, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 package cache
 
 import (
@@ -12,9 +15,11 @@ func BenchmarkLRUCachePutSmall(b *testing.B) {
 	cache := &LRU{Size: smallLen}
 	for n := 0; n < b.N; n++ {
 		for i := 0; i < smallLen; i++ {
-			var idBytes [32]byte
-			rand.Read(idBytes[:])
-			cache.Put(ids.NewID(idBytes), n)
+			var id ids.ID
+			if _, err := rand.Read(id[:]); err != nil {
+				b.Fatal(err)
+			}
+			cache.Put(id, n)
 		}
 		b.StopTimer()
 		cache.Flush()
@@ -27,9 +32,11 @@ func BenchmarkLRUCachePutMedium(b *testing.B) {
 	cache := &LRU{Size: mediumLen}
 	for n := 0; n < b.N; n++ {
 		for i := 0; i < mediumLen; i++ {
-			var idBytes [32]byte
-			rand.Read(idBytes[:])
-			cache.Put(ids.NewID(idBytes), n)
+			var id ids.ID
+			if _, err := rand.Read(id[:]); err != nil {
+				b.Fatal(err)
+			}
+			cache.Put(id, n)
 		}
 		b.StopTimer()
 		cache.Flush()
@@ -42,9 +49,11 @@ func BenchmarkLRUCachePutLarge(b *testing.B) {
 	cache := &LRU{Size: largeLen}
 	for n := 0; n < b.N; n++ {
 		for i := 0; i < largeLen; i++ {
-			var idBytes [32]byte
-			rand.Read(idBytes[:])
-			cache.Put(ids.NewID(idBytes), n)
+			var id ids.ID
+			if _, err := rand.Read(id[:]); err != nil {
+				b.Fatal(err)
+			}
+			cache.Put(id, n)
 		}
 		b.StopTimer()
 		cache.Flush()

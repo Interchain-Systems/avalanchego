@@ -134,6 +134,9 @@ func (service *Info) GetBlockchainID(_ *http.Request, args *GetBlockchainIDArgs,
 
 // PeersReply are the results from calling Peers
 type PeersReply struct {
+	// Number of elements in [Peers]
+	NumPeers json.Uint64 `json:"numPeers"`
+	// Each element is a peer
 	Peers []network.PeerID `json:"peers"`
 }
 
@@ -142,6 +145,7 @@ func (service *Info) Peers(_ *http.Request, _ *struct{}, reply *PeersReply) erro
 	service.log.Info("Info: Peers called")
 
 	reply.Peers = service.networking.Peers()
+	reply.NumPeers = json.Uint64(len(reply.Peers))
 	return nil
 }
 
@@ -183,5 +187,18 @@ type GetTxFeeResponse struct {
 func (service *Info) GetTxFee(_ *http.Request, args *struct{}, reply *GetTxFeeResponse) error {
 	reply.CreationTxFee = json.Uint64(service.creationTxFee)
 	reply.TxFee = json.Uint64(service.txFee)
+	return nil
+}
+
+// GetNodeIPReply are the results from calling GetNodeVersion
+type GetNodeIPReply struct {
+	IP string `json:"ip"`
+}
+
+// GetNodeIP returns the IP of this node
+func (service *Info) GetNodeIP(_ *http.Request, _ *struct{}, reply *GetNodeIPReply) error {
+	service.log.Info("Info: GetNodeIP called")
+
+	reply.IP = service.networking.IP().String()
 	return nil
 }

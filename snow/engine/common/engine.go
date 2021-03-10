@@ -17,6 +17,10 @@ type Engine interface {
 
 	// Returns true iff the chain is done bootstrapping
 	IsBootstrapped() bool
+
+	// Returns nil if the engine is healthy.
+	// Periodically called and reported through the health API
+	Health() (interface{}, error)
 }
 
 // Handler defines the functions that are acted on the node
@@ -60,7 +64,7 @@ type FrontierHandler interface {
 	AcceptedFrontier(
 		validatorID ids.ShortID,
 		requestID uint32,
-		containerIDs ids.Set,
+		containerIDs []ids.ID,
 	) error
 
 	// Notify this engine that a get accepted frontier request it issued has
@@ -92,7 +96,7 @@ type AcceptedHandler interface {
 	GetAccepted(
 		validatorID ids.ShortID,
 		requestID uint32,
-		containerIDs ids.Set,
+		containerIDs []ids.ID,
 	) error
 
 	// Notify this engine of a set of accepted vertices.
@@ -105,7 +109,7 @@ type AcceptedHandler interface {
 	Accepted(
 		validatorID ids.ShortID,
 		requestID uint32,
-		containerIDs ids.Set,
+		containerIDs []ids.ID,
 	) error
 
 	// Notify this engine that a get accepted request it issued has failed.
@@ -135,7 +139,7 @@ type FetchHandler interface {
 	// container. Unless that container was pruned from the active set.
 	//
 	// This engine should respond with a Put message with the same requestID if
-	// the container was locally avaliable. Otherwise, the message can be safely
+	// the container was locally available. Otherwise, the message can be safely
 	// dropped.
 	Get(validatorID ids.ShortID, requestID uint32, containerID ids.ID) error
 
@@ -258,7 +262,7 @@ type QueryHandler interface {
 	// This function can be called by any validator. It is not safe to assume
 	// this message is in response to a PullQuery or a PushQuery message.
 	// However, the validatorID is assumed to be authenticated.
-	Chits(validatorID ids.ShortID, requestID uint32, containerIDs ids.Set) error
+	Chits(validatorID ids.ShortID, requestID uint32, containerIDs []ids.ID) error
 
 	// Notify this engine that a query it issued has failed.
 	//

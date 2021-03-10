@@ -20,7 +20,9 @@ func TestAddValidatorTxSyntacticVerify(t *testing.T) {
 	vm, _ := defaultVM()
 	vm.Ctx.Lock.Lock()
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.Ctx.Lock.Unlock()
 	}()
 
@@ -359,7 +361,9 @@ func TestAddValidatorTxSemanticVerify(t *testing.T) {
 	vm, _ := defaultVM()
 	vm.Ctx.Lock.Lock()
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.Ctx.Lock.Unlock()
 	}()
 	vDB := versiondb.New(vm.DB)
@@ -467,7 +471,7 @@ func TestAddValidatorTxSemanticVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, utxoID := range utxoIDs.List() {
+	for _, utxoID := range utxoIDs {
 		if err := vm.removeUTXO(vDB, utxoID); err != nil {
 			t.Fatal(err)
 		}

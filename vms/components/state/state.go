@@ -118,18 +118,19 @@ func (s *state) Put(db database.Database, typeID uint64, key ids.ID, value inter
 	// Get the unique ID of thie key/typeID pair
 	uID := s.uniqueID(key, typeID)
 	if value == nil {
-		return db.Delete(uID.Bytes())
+		return db.Delete(uID[:])
 	}
 	// Put the byte repr. of the value in the database
 	valueBytes, err := marshaller(value)
 	if err != nil {
 		return err
 	}
-	return db.Put(uID.Bytes(), valueBytes)
+	return db.Put(uID[:], valueBytes)
 }
 
 func (s *state) Has(db database.Database, typeID uint64, key ids.ID) (bool, error) {
-	return db.Has(s.uniqueID(key, typeID).Bytes())
+	key = s.uniqueID(key, typeID)
+	return db.Has(key[:])
 }
 
 // Implements State.Get
@@ -143,7 +144,7 @@ func (s *state) Get(db database.Database, typeID uint64, key ids.ID) (interface{
 	uID := s.uniqueID(key, typeID)
 
 	// Get the value from the database
-	valueBytes, err := db.Get(uID.Bytes())
+	valueBytes, err := db.Get(uID[:])
 	if err != nil {
 		return nil, err
 	}
@@ -174,8 +175,8 @@ func (s *state) GetStatus(db database.Database, key ids.ID) choices.Status {
 }
 
 // PutID associates [key] with [ID] in [db]
-func (s *state) PutID(db database.Database, key ids.ID, ID ids.ID) error {
-	return s.Put(db, IDTypeID, key, ID)
+func (s *state) PutID(db database.Database, key ids.ID, id ids.ID) error {
+	return s.Put(db, IDTypeID, key, id)
 }
 
 // GetID gets the ID associated with [key] in [db]
@@ -212,17 +213,17 @@ func (s *state) GetTime(db database.Database, key ids.ID) (time.Time, error) {
 }
 
 // Prefix [ID] with [typeID] to prevent key collisions in the database
-func (s *state) uniqueID(ID ids.ID, typeID uint64) ids.ID {
+func (s *state) uniqueID(id ids.ID, typeID uint64) ids.ID {
 	uIDCache, cacheExists := s.uniqueIDCaches[typeID]
 	if cacheExists {
-		if uID, uIDExists := uIDCache.Get(ID); uIDExists { // Get the uniqueID associated with [typeID] and [ID]
+		if uID, uIDExists := uIDCache.Get(id); uIDExists { // Get the uniqueID associated with [typeID] and [ID]
 			return uID.(ids.ID)
 		}
 	} else {
 		s.uniqueIDCaches[typeID] = &cache.LRU{Size: cacheSize}
 	}
-	uID := ID.Prefix(typeID)
-	s.uniqueIDCaches[typeID].Put(ID, uID)
+	uID := id.Prefix(typeID)
+	s.uniqueIDCaches[typeID].Put(id, uID)
 	return uID
 }
 

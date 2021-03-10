@@ -53,7 +53,7 @@ func (vm *VM) stake(
 	for _, key := range keys {
 		addrs.Add(key.PublicKey().Address())
 	}
-	utxos, _, _, err := vm.GetUTXOs(db, addrs, ids.ShortEmpty, ids.Empty, -1) // The UTXOs controlled by [keys]
+	utxos, _, _, err := vm.GetUTXOs(db, addrs, ids.ShortEmpty, ids.Empty, -1, false) // The UTXOs controlled by [keys]
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("couldn't get UTXOs: %w", err)
 	}
@@ -82,7 +82,7 @@ func (vm *VM) stake(
 			break
 		}
 
-		if assetID := utxo.AssetID(); !assetID.Equals(vm.Ctx.AVAXAssetID) {
+		if assetID := utxo.AssetID(); assetID != vm.Ctx.AVAXAssetID {
 			continue // We only care about staking AVAX, so ignore other assets
 		}
 
@@ -178,7 +178,7 @@ func (vm *VM) stake(
 			break
 		}
 
-		if assetID := utxo.AssetID(); !assetID.Equals(vm.Ctx.AVAXAssetID) {
+		if assetID := utxo.AssetID(); assetID != vm.Ctx.AVAXAssetID {
 			continue // We only care about burning AVAX, so ignore other assets
 		}
 
@@ -384,16 +384,16 @@ func (vm *VM) semanticVerifySpendUTXOs(
 
 	// Track the amount of locked transfers and their owners
 	// locktime -> ownerID -> amount
-	lockedProduced := make(map[uint64]map[[32]byte]uint64)
-	lockedConsumed := make(map[uint64]map[[32]byte]uint64)
+	lockedProduced := make(map[uint64]map[ids.ID]uint64)
+	lockedConsumed := make(map[uint64]map[ids.ID]uint64)
 
 	for index, input := range ins {
 		utxo := utxos[index] // The UTXO consumed by [input]
 
-		if assetID := utxo.AssetID(); !assetID.Equals(feeAssetID) {
+		if assetID := utxo.AssetID(); assetID != feeAssetID {
 			return permError{errAssetIDMismatch}
 		}
-		if assetID := input.AssetID(); !assetID.Equals(feeAssetID) {
+		if assetID := input.AssetID(); assetID != feeAssetID {
 			return permError{errAssetIDMismatch}
 		}
 
@@ -428,13 +428,31 @@ func (vm *VM) semanticVerifySpendUTXOs(
 
 		amount := in.Amount()
 
-		if locktime == 0 {
-			newUnlockedConsumed, err := safemath.Add64(unlockedConsumed, amount)
-			if err != nil {
-				return permError{err}
+		// Rule change for Apricot phase 0 hardfork
+		chainTime, err := vm.getTimestamp(vm.DB)
+		if err != nil {
+			return tempError{fmt.Errorf("couldn't get chain timestamp: %w", err)}
+		}
+		if chainTime.Before(vm.apricotPhase0Time) {
+			// Old rule
+			if locktime == 0 {
+				newUnlockedConsumed, err := safemath.Add64(unlockedConsumed, amount)
+				if err != nil {
+					return permError{err}
+				}
+				unlockedConsumed = newUnlockedConsumed
+				continue
 			}
-			unlockedConsumed = newUnlockedConsumed
-			continue
+		} else {
+			// New rule
+			if now >= locktime {
+				newUnlockedConsumed, err := safemath.Add64(unlockedConsumed, amount)
+				if err != nil {
+					return permError{err}
+				}
+				unlockedConsumed = newUnlockedConsumed
+				continue
+			}
 		}
 
 		owned, ok := out.(Owned)
@@ -442,7 +460,7 @@ func (vm *VM) semanticVerifySpendUTXOs(
 			return permError{errUnknownOwners}
 		}
 		owner := owned.Owners()
-		ownerBytes, err := vm.codec.Marshal(owner)
+		ownerBytes, err := vm.codec.Marshal(codecVersion, owner)
 		if err != nil {
 			return tempError{
 				fmt.Errorf("couldn't marshal owner: %w", err),
@@ -451,7 +469,7 @@ func (vm *VM) semanticVerifySpendUTXOs(
 		ownerID := hashing.ComputeHash256Array(ownerBytes)
 		owners, ok := lockedConsumed[locktime]
 		if !ok {
-			owners = make(map[[32]byte]uint64)
+			owners = make(map[ids.ID]uint64)
 			lockedConsumed[locktime] = owners
 		}
 		newAmount, err := safemath.Add64(owners[ownerID], amount)
@@ -462,7 +480,7 @@ func (vm *VM) semanticVerifySpendUTXOs(
 	}
 
 	for _, out := range outs {
-		if assetID := out.AssetID(); !assetID.Equals(feeAssetID) {
+		if assetID := out.AssetID(); assetID != feeAssetID {
 			return permError{errAssetIDMismatch}
 		}
 
@@ -490,7 +508,7 @@ func (vm *VM) semanticVerifySpendUTXOs(
 			return permError{errUnknownOwners}
 		}
 		owner := owned.Owners()
-		ownerBytes, err := vm.codec.Marshal(owner)
+		ownerBytes, err := vm.codec.Marshal(codecVersion, owner)
 		if err != nil {
 			return tempError{
 				fmt.Errorf("couldn't marshal owner: %w", err),
@@ -499,7 +517,7 @@ func (vm *VM) semanticVerifySpendUTXOs(
 		ownerID := hashing.ComputeHash256Array(ownerBytes)
 		owners, ok := lockedProduced[locktime]
 		if !ok {
-			owners = make(map[[32]byte]uint64)
+			owners = make(map[ids.ID]uint64)
 			lockedProduced[locktime] = owners
 		}
 		newAmount, err := safemath.Add64(owners[ownerID], amount)

@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/ava-labs/avalanchego/api"
+	"github.com/ava-labs/avalanchego/api/health"
 	"github.com/ava-labs/avalanchego/api/keystore"
 	"github.com/ava-labs/avalanchego/chains/atomic"
 	"github.com/ava-labs/avalanchego/database"
@@ -98,6 +99,7 @@ type ChainParameters struct {
 }
 
 type chain struct {
+	Name    string
 	Engine  common.Engine
 	Handler *router.Handler
 	Ctx     *snow.Context
@@ -129,7 +131,9 @@ type ManagerConfig struct {
 	AVAXAssetID             ids.ID
 	XChainID                ids.ID
 	CriticalChains          ids.Set          // Chains that can't exit gracefully
+	WhitelistedSubnets      ids.Set          // Subnets to validate
 	TimeoutManager          *timeout.Manager // Manages request timeouts when sending messages to other validators
+	HealthService           *health.Health
 }
 
 type manager struct {
@@ -146,18 +150,14 @@ type manager struct {
 	chainsLock sync.Mutex
 	// Key: Chain's ID
 	// Value: The chain
-	chains map[[32]byte]*router.Handler
+	chains map[ids.ID]*router.Handler
 }
 
-// New returns a new Manager where:
-//     <db> is this node's database
-//     <sender> sends messages to other validators
-//     <validators> validate this chain
-// TODO: Make this function take less arguments
+// New returns a new Manager
 func New(config *ManagerConfig) Manager {
 	m := &manager{
 		ManagerConfig: *config,
-		chains:        make(map[[32]byte]*router.Handler),
+		chains:        make(map[ids.ID]*router.Handler),
 	}
 	m.Initialize()
 	return m
@@ -177,6 +177,15 @@ func (m *manager) CreateChain(chain ChainParameters) {
 
 // Create a chain
 func (m *manager) ForceCreateChain(chainParams ChainParameters) {
+	if !m.WhitelistedSubnets.Contains(chainParams.SubnetID) {
+		m.Log.Debug("Skipped creating non-whitelisted chain:\n"+
+			"    ID: %s\n"+
+			"    VMID:%s",
+			chainParams.ID,
+			chainParams.VMAlias,
+		)
+		return
+	}
 	// Assert that there isn't already a chain with an alias in [chain].Aliases
 	// (Recall that the string repr. of a chain's ID is also an alias for a chain)
 	if alias, isRepeat := m.isChainWithAlias(chainParams.ID.String()); isRepeat {
@@ -197,17 +206,16 @@ func (m *manager) ForceCreateChain(chainParams ChainParameters) {
 		m.Log.Error("Error while creating new chain: %s", err)
 		return
 	}
-	chainID := chainParams.ID.Key()
 
 	m.chainsLock.Lock()
-	m.chains[chainID] = chain.Handler
+	m.chains[chainParams.ID] = chain.Handler
 	m.chainsLock.Unlock()
 
 	// Associate the newly created chain with its default alias
 	m.Log.AssertNoError(m.Alias(chainParams.ID, chainParams.ID.String()))
 
 	// Notify those that registered to be notified when a new chain is created
-	m.notifyRegistrants(chain.Ctx, chain.VM)
+	m.notifyRegistrants(chain.Name, chain.Ctx, chain.VM)
 }
 
 // Create a chain
@@ -229,13 +237,12 @@ func (m *manager) buildChain(chainParams ChainParameters) (*chain, error) {
 	}
 
 	ctx := &snow.Context{
-		NetworkID:   m.NetworkID,
-		SubnetID:    chainParams.SubnetID,
-		ChainID:     chainParams.ID,
-		NodeID:      m.NodeID,
-		XChainID:    m.XChainID,
-		AVAXAssetID: m.AVAXAssetID,
-
+		NetworkID:           m.NetworkID,
+		SubnetID:            chainParams.SubnetID,
+		ChainID:             chainParams.ID,
+		NodeID:              m.NodeID,
+		XChainID:            m.XChainID,
+		AVAXAssetID:         m.AVAXAssetID,
 		Log:                 chainLog,
 		DecisionDispatcher:  m.DecisionEvents,
 		ConsensusDispatcher: m.ConsensusEvents,
@@ -341,11 +348,13 @@ func (m *manager) buildChain(chainParams ChainParameters) (*chain, error) {
 		return nil, fmt.Errorf("the vm should have type avalanche.DAGVM or snowman.ChainVM. Chain not created")
 	}
 
+	// Register the chain with the timeout manager
+	if err := m.TimeoutManager.RegisterChain(ctx, consensusParams.Namespace); err != nil {
+		return nil, err
+	}
+
 	// Allows messages to be routed to the new chain
 	m.ManagerConfig.Router.AddChain(chain.Handler)
-
-	// Register the chain with the timeout manager
-	m.TimeoutManager.RegisterChain(ctx, consensusParams.Namespace)
 
 	// If the X or P Chain panics, do not attempt to recover
 	if m.CriticalChains.Contains(chainParams.ID) {
@@ -384,7 +393,7 @@ func (m *manager) createAvalancheChain(
 	ctx.Lock.Lock()
 	defer ctx.Lock.Unlock()
 
-	db := prefixdb.New(ctx.ChainID.Bytes(), m.DB)
+	db := prefixdb.New(ctx.ChainID[:], m.DB)
 	vmDB := prefixdb.New([]byte("vm"), db)
 	vertexDB := prefixdb.New([]byte("vertex"), db)
 	vertexBootstrappingDB := prefixdb.New([]byte("vertex_bs"), db)
@@ -445,6 +454,20 @@ func (m *manager) createAvalancheChain(
 		return nil, fmt.Errorf("error initializing avalanche engine: %w", err)
 	}
 
+	// Register health checks
+	chainAlias, err := m.PrimaryAlias(ctx.ChainID)
+	if err != nil {
+		chainAlias = ctx.ChainID.String()
+	}
+	wrapperHc := &healthCheckWrapper{
+		chain: chainAlias,
+		lock:  &ctx.Lock,
+		check: engine.Health,
+	}
+	if err := m.HealthService.RegisterCheck(wrapperHc); err != nil {
+		return nil, fmt.Errorf("couldn't add health check for chain %s: %w", chainAlias, err)
+	}
+
 	// Asynchronously passes messages from the network to the consensus engine
 	handler := &router.Handler{}
 	handler.Initialize(
@@ -460,6 +483,7 @@ func (m *manager) createAvalancheChain(
 	)
 
 	return &chain{
+		Name:    chainAlias,
 		Engine:  engine,
 		Handler: handler,
 		VM:      vm,
@@ -481,7 +505,7 @@ func (m *manager) createSnowmanChain(
 	ctx.Lock.Lock()
 	defer ctx.Lock.Unlock()
 
-	db := prefixdb.New(ctx.ChainID.Bytes(), m.DB)
+	db := prefixdb.New(ctx.ChainID[:], m.DB)
 	vmDB := prefixdb.New([]byte("vm"), db)
 	bootstrappingDB := prefixdb.New([]byte("bs"), db)
 
@@ -545,7 +569,23 @@ func (m *manager) createSnowmanChain(
 		consensusParams.Metrics,
 	)
 
+	// Register health checks
+	chainAlias, err := m.PrimaryAlias(ctx.ChainID)
+	if err != nil {
+		chainAlias = ctx.ChainID.String()
+	}
+
+	wrapperHc := &healthCheckWrapper{
+		chain: chainAlias,
+		lock:  &ctx.Lock,
+		check: engine.Health,
+	}
+	if err := m.HealthService.RegisterCheck(wrapperHc); err != nil {
+		return nil, fmt.Errorf("couldn't add health check for chain %s: %w", chainAlias, err)
+	}
+
 	return &chain{
+		Name:    chainAlias,
 		Engine:  engine,
 		Handler: handler,
 		VM:      vm,
@@ -557,7 +597,7 @@ func (m *manager) SubnetID(chainID ids.ID) (ids.ID, error) {
 	m.chainsLock.Lock()
 	defer m.chainsLock.Unlock()
 
-	chain, exists := m.chains[chainID.Key()]
+	chain, exists := m.chains[chainID]
 	if !exists {
 		return ids.ID{}, errors.New("unknown chain ID")
 	}
@@ -566,7 +606,7 @@ func (m *manager) SubnetID(chainID ids.ID) (ids.ID, error) {
 
 func (m *manager) IsBootstrapped(id ids.ID) bool {
 	m.chainsLock.Lock()
-	chain, exists := m.chains[id.Key()]
+	chain, exists := m.chains[id]
 	m.chainsLock.Unlock()
 	if !exists {
 		return false
@@ -577,6 +617,7 @@ func (m *manager) IsBootstrapped(id ids.ID) bool {
 
 // Shutdown stops all the chains
 func (m *manager) Shutdown() {
+	m.Log.Info("shutting down chain manager")
 	m.ManagerConfig.Router.Shutdown()
 }
 
@@ -585,9 +626,9 @@ func (m *manager) LookupVM(alias string) (ids.ID, error) { return m.VMManager.Lo
 
 // Notify registrants [those who want to know about the creation of chains]
 // that the specified chain has been created
-func (m *manager) notifyRegistrants(ctx *snow.Context, vm interface{}) {
+func (m *manager) notifyRegistrants(name string, ctx *snow.Context, vm interface{}) {
 	for _, registrant := range m.registrants {
-		registrant.RegisterChain(ctx, vm)
+		registrant.RegisterChain(name, ctx, vm)
 	}
 }
 
@@ -601,4 +642,28 @@ func (m *manager) isChainWithAlias(aliases ...string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// Wraps a health check.
+// Grabs [Lock] before executing the health check
+type healthCheckWrapper struct {
+	check func() (interface{}, error)
+
+	// Grabs/releases this before/after health check func
+	lock *sync.RWMutex
+
+	// Alias/ID of chain this health check is for
+	chain string
+}
+
+// Name is this health check's formatted name
+func (hc *healthCheckWrapper) Name() string {
+	return hc.chain
+}
+
+// Execute executes the health check function with the lock
+func (hc *healthCheckWrapper) Execute() (interface{}, error) {
+	hc.lock.Lock()
+	defer hc.lock.Unlock()
+	return hc.check()
 }

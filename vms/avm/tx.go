@@ -34,7 +34,7 @@ type UnsignedTx interface {
 
 	SyntacticVerify(
 		ctx *snow.Context,
-		c codec.Codec,
+		c codec.Manager,
 		txFeeAssetID ids.ID,
 		txFee uint64,
 		creationTxFee uint64,
@@ -62,14 +62,13 @@ func (t *Tx) Credentials() []verify.Verifiable { return t.Creds }
 // SyntacticVerify verifies that this transaction is well-formed.
 func (t *Tx) SyntacticVerify(
 	ctx *snow.Context,
-	c codec.Codec,
+	c codec.Manager,
 	txFeeAssetID ids.ID,
 	txFee uint64,
 	creationTxFee uint64,
 	numFxs int,
 ) error {
-	switch {
-	case t == nil || t.UnsignedTx == nil:
+	if t == nil || t.UnsignedTx == nil {
 		return errNilTx
 	}
 
@@ -102,8 +101,8 @@ func (t *Tx) SemanticVerify(vm *VM, tx UnsignedTx) error {
 }
 
 // SignSECP256K1Fx ...
-func (t *Tx) SignSECP256K1Fx(c codec.Codec, signers [][]*crypto.PrivateKeySECP256K1R) error {
-	unsignedBytes, err := c.Marshal(&t.UnsignedTx)
+func (t *Tx) SignSECP256K1Fx(c codec.Manager, signers [][]*crypto.PrivateKeySECP256K1R) error {
+	unsignedBytes, err := c.Marshal(codecVersion, &t.UnsignedTx)
 	if err != nil {
 		return fmt.Errorf("problem creating transaction: %w", err)
 	}
@@ -123,7 +122,7 @@ func (t *Tx) SignSECP256K1Fx(c codec.Codec, signers [][]*crypto.PrivateKeySECP25
 		t.Creds = append(t.Creds, cred)
 	}
 
-	signedBytes, err := c.Marshal(t)
+	signedBytes, err := c.Marshal(codecVersion, t)
 	if err != nil {
 		return fmt.Errorf("problem creating transaction: %w", err)
 	}
@@ -132,8 +131,8 @@ func (t *Tx) SignSECP256K1Fx(c codec.Codec, signers [][]*crypto.PrivateKeySECP25
 }
 
 // SignNFTFx ...
-func (t *Tx) SignNFTFx(c codec.Codec, signers [][]*crypto.PrivateKeySECP256K1R) error {
-	unsignedBytes, err := c.Marshal(&t.UnsignedTx)
+func (t *Tx) SignNFTFx(c codec.Manager, signers [][]*crypto.PrivateKeySECP256K1R) error {
+	unsignedBytes, err := c.Marshal(codecVersion, &t.UnsignedTx)
 	if err != nil {
 		return fmt.Errorf("problem creating transaction: %w", err)
 	}
@@ -153,7 +152,7 @@ func (t *Tx) SignNFTFx(c codec.Codec, signers [][]*crypto.PrivateKeySECP256K1R) 
 		t.Creds = append(t.Creds, cred)
 	}
 
-	signedBytes, err := c.Marshal(t)
+	signedBytes, err := c.Marshal(codecVersion, t)
 	if err != nil {
 		return fmt.Errorf("problem creating transaction: %w", err)
 	}

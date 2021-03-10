@@ -312,11 +312,11 @@ func testNetwork(t *testing.T) (*sync.WaitGroup, *sync.WaitGroup, *network, *syn
 
 func TestNewDefaultNetwork(t *testing.T) {
 	log := logging.NoLog{}
-	ip := utils.IPDesc{
-		IP:   net.IPv6loopback,
-		Port: 0,
-	}
-	id := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip.String())))
+	ip := utils.NewDynamicIPDesc(
+		net.IPv6loopback,
+		0,
+	)
+	id := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip.IP().String())))
 	networkID := uint32(0)
 	appVersion := version.NewDefaultVersion("app", 0, 1, 0)
 	versionParser := version.NewDefaultParser()
@@ -357,6 +357,13 @@ func TestNewDefaultNetwork(t *testing.T) {
 		vdrs,
 		vdrs,
 		handler,
+		time.Duration(0),
+		0,
+		nil,
+		false,
+		0,
+		0,
+		time.Now(),
 	)
 	assert.NotNil(t, net)
 
@@ -375,16 +382,16 @@ func TestEstablishConnection(t *testing.T) {
 	appVersion := version.NewDefaultVersion("app", 0, 1, 0)
 	versionParser := version.NewDefaultParser()
 
-	ip0 := utils.IPDesc{
-		IP:   net.IPv6loopback,
-		Port: 0,
-	}
-	id0 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip0.String())))
-	ip1 := utils.IPDesc{
-		IP:   net.IPv6loopback,
-		Port: 1,
-	}
-	id1 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip1.String())))
+	ip0 := utils.NewDynamicIPDesc(
+		net.IPv6loopback,
+		0,
+	)
+	id0 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip0.IP().String())))
+	ip1 := utils.NewDynamicIPDesc(
+		net.IPv6loopback,
+		1,
+	)
+	id1 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip1.IP().String())))
 
 	listener0 := &testListener{
 		addr: &net.TCPAddr{
@@ -417,8 +424,8 @@ func TestEstablishConnection(t *testing.T) {
 		outbounds: make(map[string]*testListener),
 	}
 
-	caller0.outbounds[ip1.String()] = listener1
-	caller1.outbounds[ip0.String()] = listener0
+	caller0.outbounds[ip1.IP().String()] = listener1
+	caller1.outbounds[ip0.IP().String()] = listener0
 
 	serverUpgrader := NewIPUpgrader()
 	clientUpgrader := NewIPUpgrader()
@@ -463,6 +470,13 @@ func TestEstablishConnection(t *testing.T) {
 		vdrs,
 		vdrs,
 		handler0,
+		time.Duration(0),
+		0,
+		nil,
+		false,
+		0,
+		0,
+		time.Now(),
 	)
 	assert.NotNil(t, net0)
 
@@ -481,10 +495,15 @@ func TestEstablishConnection(t *testing.T) {
 		vdrs,
 		vdrs,
 		handler1,
+		time.Duration(0),
+		0,
+		nil,
+		false,
+		0,
+		0,
+		time.Now(),
 	)
 	assert.NotNil(t, net1)
-
-	net0.Track(ip1)
 
 	go func() {
 		err := net0.Dispatch()
@@ -494,6 +513,8 @@ func TestEstablishConnection(t *testing.T) {
 		err := net1.Dispatch()
 		assert.Error(t, err)
 	}()
+
+	net0.Track(ip1.IP())
 
 	wg0.Wait()
 	wg1.Wait()
@@ -511,16 +532,16 @@ func TestDoubleTrack(t *testing.T) {
 	appVersion := version.NewDefaultVersion("app", 0, 1, 0)
 	versionParser := version.NewDefaultParser()
 
-	ip0 := utils.IPDesc{
-		IP:   net.IPv6loopback,
-		Port: 0,
-	}
-	id0 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip0.String())))
-	ip1 := utils.IPDesc{
-		IP:   net.IPv6loopback,
-		Port: 1,
-	}
-	id1 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip1.String())))
+	ip0 := utils.NewDynamicIPDesc(
+		net.IPv6loopback,
+		0,
+	)
+	id0 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip0.IP().String())))
+	ip1 := utils.NewDynamicIPDesc(
+		net.IPv6loopback,
+		1,
+	)
+	id1 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip1.IP().String())))
 
 	listener0 := &testListener{
 		addr: &net.TCPAddr{
@@ -553,8 +574,8 @@ func TestDoubleTrack(t *testing.T) {
 		outbounds: make(map[string]*testListener),
 	}
 
-	caller0.outbounds[ip1.String()] = listener1
-	caller1.outbounds[ip0.String()] = listener0
+	caller0.outbounds[ip1.IP().String()] = listener1
+	caller1.outbounds[ip0.IP().String()] = listener0
 
 	serverUpgrader := NewIPUpgrader()
 	clientUpgrader := NewIPUpgrader()
@@ -599,6 +620,13 @@ func TestDoubleTrack(t *testing.T) {
 		vdrs,
 		vdrs,
 		handler0,
+		time.Duration(0),
+		0,
+		nil,
+		false,
+		0,
+		0,
+		time.Now(),
 	)
 	assert.NotNil(t, net0)
 
@@ -617,11 +645,18 @@ func TestDoubleTrack(t *testing.T) {
 		vdrs,
 		vdrs,
 		handler1,
+		time.Duration(0),
+		0,
+		nil,
+		false,
+		0,
+		0,
+		time.Now(),
 	)
 	assert.NotNil(t, net1)
 
-	net0.Track(ip1)
-	net0.Track(ip1)
+	net0.Track(ip1.IP())
+	net0.Track(ip1.IP())
 
 	go func() {
 		err := net0.Dispatch()
@@ -648,16 +683,16 @@ func TestDoubleClose(t *testing.T) {
 	appVersion := version.NewDefaultVersion("app", 0, 1, 0)
 	versionParser := version.NewDefaultParser()
 
-	ip0 := utils.IPDesc{
-		IP:   net.IPv6loopback,
-		Port: 0,
-	}
-	id0 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip0.String())))
-	ip1 := utils.IPDesc{
-		IP:   net.IPv6loopback,
-		Port: 1,
-	}
-	id1 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip1.String())))
+	ip0 := utils.NewDynamicIPDesc(
+		net.IPv6loopback,
+		0,
+	)
+	id0 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip0.IP().String())))
+	ip1 := utils.NewDynamicIPDesc(
+		net.IPv6loopback,
+		1,
+	)
+	id1 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip1.IP().String())))
 
 	listener0 := &testListener{
 		addr: &net.TCPAddr{
@@ -690,8 +725,8 @@ func TestDoubleClose(t *testing.T) {
 		outbounds: make(map[string]*testListener),
 	}
 
-	caller0.outbounds[ip1.String()] = listener1
-	caller1.outbounds[ip0.String()] = listener0
+	caller0.outbounds[ip1.IP().String()] = listener1
+	caller1.outbounds[ip0.IP().String()] = listener0
 
 	serverUpgrader := NewIPUpgrader()
 	clientUpgrader := NewIPUpgrader()
@@ -736,6 +771,13 @@ func TestDoubleClose(t *testing.T) {
 		vdrs,
 		vdrs,
 		handler0,
+		time.Duration(0),
+		0,
+		nil,
+		false,
+		0,
+		0,
+		time.Now(),
 	)
 	assert.NotNil(t, net0)
 
@@ -754,10 +796,17 @@ func TestDoubleClose(t *testing.T) {
 		vdrs,
 		vdrs,
 		handler1,
+		time.Duration(0),
+		0,
+		nil,
+		false,
+		0,
+		0,
+		time.Now(),
 	)
 	assert.NotNil(t, net1)
 
-	net0.Track(ip1)
+	net0.Track(ip1.IP())
 
 	go func() {
 		err := net0.Dispatch()
@@ -790,16 +839,16 @@ func TestTrackConnected(t *testing.T) {
 	appVersion := version.NewDefaultVersion("app", 0, 1, 0)
 	versionParser := version.NewDefaultParser()
 
-	ip0 := utils.IPDesc{
-		IP:   net.IPv6loopback,
-		Port: 0,
-	}
-	id0 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip0.String())))
-	ip1 := utils.IPDesc{
-		IP:   net.IPv6loopback,
-		Port: 1,
-	}
-	id1 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip1.String())))
+	ip0 := utils.NewDynamicIPDesc(
+		net.IPv6loopback,
+		0,
+	)
+	id0 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip0.IP().String())))
+	ip1 := utils.NewDynamicIPDesc(
+		net.IPv6loopback,
+		1,
+	)
+	id1 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip1.IP().String())))
 
 	listener0 := &testListener{
 		addr: &net.TCPAddr{
@@ -832,8 +881,8 @@ func TestTrackConnected(t *testing.T) {
 		outbounds: make(map[string]*testListener),
 	}
 
-	caller0.outbounds[ip1.String()] = listener1
-	caller1.outbounds[ip0.String()] = listener0
+	caller0.outbounds[ip1.IP().String()] = listener1
+	caller1.outbounds[ip0.IP().String()] = listener0
 
 	serverUpgrader := NewIPUpgrader()
 	clientUpgrader := NewIPUpgrader()
@@ -878,6 +927,13 @@ func TestTrackConnected(t *testing.T) {
 		vdrs,
 		vdrs,
 		handler0,
+		time.Duration(0),
+		0,
+		nil,
+		false,
+		0,
+		0,
+		time.Now(),
 	)
 	assert.NotNil(t, net0)
 
@@ -896,10 +952,17 @@ func TestTrackConnected(t *testing.T) {
 		vdrs,
 		vdrs,
 		handler1,
+		time.Duration(0),
+		0,
+		nil,
+		false,
+		0,
+		0,
+		time.Now(),
 	)
 	assert.NotNil(t, net1)
 
-	net0.Track(ip1)
+	net0.Track(ip1.IP())
 
 	go func() {
 		err := net0.Dispatch()
@@ -913,7 +976,7 @@ func TestTrackConnected(t *testing.T) {
 	wg0.Wait()
 	wg1.Wait()
 
-	net0.Track(ip1)
+	net0.Track(ip1.IP())
 
 	err := net0.Close()
 	assert.NoError(t, err)
@@ -928,16 +991,16 @@ func TestTrackConnectedRace(t *testing.T) {
 	appVersion := version.NewDefaultVersion("app", 0, 1, 0)
 	versionParser := version.NewDefaultParser()
 
-	ip0 := utils.IPDesc{
-		IP:   net.IPv6loopback,
-		Port: 0,
-	}
-	id0 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip0.String())))
-	ip1 := utils.IPDesc{
-		IP:   net.IPv6loopback,
-		Port: 1,
-	}
-	id1 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip1.String())))
+	ip0 := utils.NewDynamicIPDesc(
+		net.IPv6loopback,
+		0,
+	)
+	id0 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip0.IP().String())))
+	ip1 := utils.NewDynamicIPDesc(
+		net.IPv6loopback,
+		1,
+	)
+	id1 := ids.NewShortID(hashing.ComputeHash160Array([]byte(ip1.IP().String())))
 
 	listener0 := &testListener{
 		addr: &net.TCPAddr{
@@ -970,8 +1033,8 @@ func TestTrackConnectedRace(t *testing.T) {
 		outbounds: make(map[string]*testListener),
 	}
 
-	caller0.outbounds[ip1.String()] = listener1
-	caller1.outbounds[ip0.String()] = listener0
+	caller0.outbounds[ip1.IP().String()] = listener1
+	caller1.outbounds[ip0.IP().String()] = listener0
 
 	serverUpgrader := NewIPUpgrader()
 	clientUpgrader := NewIPUpgrader()
@@ -994,6 +1057,13 @@ func TestTrackConnectedRace(t *testing.T) {
 		vdrs,
 		vdrs,
 		handler,
+		time.Duration(0),
+		0,
+		nil,
+		false,
+		0,
+		0,
+		time.Now(),
 	)
 	assert.NotNil(t, net0)
 
@@ -1012,10 +1082,17 @@ func TestTrackConnectedRace(t *testing.T) {
 		vdrs,
 		vdrs,
 		handler,
+		time.Duration(0),
+		0,
+		nil,
+		false,
+		0,
+		0,
+		time.Now(),
 	)
 	assert.NotNil(t, net1)
 
-	net0.Track(ip1)
+	net0.Track(ip1.IP())
 
 	go func() {
 		err := net0.Dispatch()

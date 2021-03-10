@@ -56,7 +56,7 @@ import (
 //      ** This should be the initial preference if staker.startTime > Wall clock
 //         time
 //	- A commit block must always be preceded on the chain by the proposal block whose
-//	  proposal is being commited
+//	  proposal is being committed
 // 3. A rejection block
 //  - Does one of the following:
 //    * Reject a proposal to change the chain time from t to t' (therefore keeping it at t)
@@ -139,7 +139,7 @@ func (cb *CommonBlock) Reject() error {
 
 // free removes this block from memory
 func (cb *CommonBlock) free() {
-	delete(cb.vm.currentBlocks, cb.ID().Key())
+	delete(cb.vm.currentBlocks, cb.ID())
 	cb.children = nil
 }
 
