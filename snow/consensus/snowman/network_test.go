@@ -70,7 +70,7 @@ func (n *Network) AddNode(sm Consensus) error {
 	for _, blk := range n.colors {
 		myDep, found := deps[blk.ParentV.ID()]
 		if !found {
-			myDep = blk.Parent()
+			myDep = blk.ParentV
 		}
 		myVtx := &TestBlock{
 			TestDecidable: choices.TestDecidable{

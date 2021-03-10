@@ -181,14 +181,14 @@ func (vm *VM) Initialize(
 	// Initialize the inner VM, which has a lot of boiler-plate logic
 	vm.SnowmanVM = &core.SnowmanVM{}
 	if err := vm.SnowmanVM.Initialize(ctx, db, vm.unmarshalBlockFunc, msgs); err != nil {
-		return err
+		return fmt.Errorf("couldn't initialize snowmanVM: %w", err)
 	}
 	vm.fx = &secp256k1fx.Fx{}
 
 	vm.codec = Codec
 	vm.codecRegistry = codec.NewDefault()
 	if err := vm.fx.Initialize(vm); err != nil {
-		return err
+		return fmt.Errorf("couldn't initialize fx: %w", err)
 	}
 
 	vm.droppedTxCache = cache.LRU{Size: droppedTxCacheSize}
@@ -203,24 +203,24 @@ func (vm *VM) Initialize(
 	// the provided genesis state
 	if !vm.DBInitialized() {
 		genesis := &Genesis{}
-		if _, err := GenesisCodec.Unmarshal(genesisBytes, genesis); err != nil {
-			return err
+		if err := GenesisCodec.Unmarshal(genesisBytes, genesis); err != nil {
+			return fmt.Errorf("couldn't unmarshal genesis bytes: %w", err)
 		}
 		if err := genesis.Initialize(); err != nil {
-			return err
+			return fmt.Errorf("couldn't initialize genesis: %w", err)
 		}
 
 		// Persist UTXOs that exist at genesis
 		for _, utxo := range genesis.UTXOs {
 			if err := vm.putUTXO(vm.DB, &utxo.UTXO); err != nil {
-				return err
+				return fmt.Errorf("couldn't put genesis UTXO: %w", err)
 			}
 		}
 
 		// Persist the platform chain's timestamp at genesis
 		genesisTime := time.Unix(int64(genesis.Timestamp), 0)
 		if err := vm.State.PutTime(vm.DB, timestampKey, genesisTime); err != nil {
-			return err
+			return fmt.Errorf("couldn't put timestamp: %w", err)
 		}
 
 		if err := vm.putCurrentSupply(vm.DB, genesis.InitialSupply); err != nil {
@@ -249,7 +249,7 @@ func (vm *VM) Initialize(
 				Tx:     *vdrTx,
 			}
 			if err := vm.addStaker(vm.DB, constants.PrimaryNetworkID, &tx); err != nil {
-				return err
+				return fmt.Errorf("couldn't add genesis staker: %w", err)
 			}
 		}
 
@@ -276,7 +276,7 @@ func (vm *VM) Initialize(
 
 		// Persist the chains that exist at genesis
 		if err := vm.putChains(vm.DB, filteredChains); err != nil {
-			return err
+			return fmt.Errorf("couldn't put genesis chains: %w", err)
 		}
 
 		// Create the genesis block and save it as being accepted (We don't just
@@ -285,10 +285,10 @@ func (vm *VM) Initialize(
 		genesisID := hashing.ComputeHash256Array(genesisBytes)
 		genesisBlock, err := vm.newCommitBlock(genesisID, 0)
 		if err != nil {
-			return err
+			return fmt.Errorf("couldn't create genesis block: %w", err)
 		}
-		if err := vm.State.PutBlock(vm.DB, genesisBlock); err != nil {
-			return err
+		if err := vm.SaveBlock(genesisBlock); err != nil {
+			return fmt.Errorf("couldn't save genesis block: %w", err)
 		}
 		genesisBlock.onAcceptDB = versiondb.New(vm.DB)
 		if err := genesisBlock.CommonBlock.Accept(); err != nil {
@@ -300,7 +300,7 @@ func (vm *VM) Initialize(
 		}
 
 		if err := vm.DB.Commit(); err != nil {
-			return err
+			return fmt.Errorf("couldn't commit DB: %w", err)
 		}
 	}
 
@@ -308,13 +308,13 @@ func (vm *VM) Initialize(
 
 	if err := vm.initSubnets(); err != nil {
 		ctx.Log.Error("failed to initialize Subnets: %s", err)
-		return err
+		return fmt.Errorf("couldn't initialize subnets: %w", err)
 	}
 
 	// Create all of the chains that the database says exist
 	if err := vm.initBlockchains(); err != nil {
 		vm.Ctx.Log.Warn("could not retrieve existing chains from database: %s", err)
-		return err
+		return fmt.Errorf("couldn't initialize chains: %w", err)
 	}
 
 	lastAcceptedID := vm.LastAccepted()
@@ -327,7 +327,7 @@ func (vm *VM) Initialize(
 	lastAcceptedIntf, err := vm.getBlock(lastAcceptedID)
 	if err != nil {
 		vm.Ctx.Log.Error("Error fetching the last accepted block (%s), %s", vm.Preferred(), err)
-		return err
+		return fmt.Errorf("couldn't get last accepted block %s: %w", lastAcceptedID, err)
 	}
 	if _, ok := lastAcceptedIntf.(decision); !ok {
 		vm.Ctx.Log.Fatal("The last accepted block, %s, must always be a decision block", lastAcceptedID)
@@ -551,7 +551,151 @@ func (vm *VM) Shutdown() error {
 }
 
 // BuildBlock builds a block to be added to consensus
-func (vm *VM) BuildBlock() (snowman.Block, error) { return vm.mempool.BuildBlock() }
+func (vm *VM) BuildBlock() (snowman.Block, error) {
+	vm.Ctx.Log.Debug("in BuildBlock")
+	// TODO: Add PreferredHeight() to core.snowmanVM
+	preferredHeight, err := vm.preferredHeight()
+	if err != nil {
+		return nil, fmt.Errorf("couldn't get preferred block's height: %w", err)
+	}
+
+	preferredID := vm.Preferred()
+
+	// If there are pending decision txs, build a block with a batch of them
+	if len(vm.unissuedDecisionTxs) > 0 {
+		numTxs := BatchSize
+		if numTxs > len(vm.unissuedDecisionTxs) {
+			numTxs = len(vm.unissuedDecisionTxs)
+		}
+		var txs []*Tx
+		txs, vm.unissuedDecisionTxs = vm.unissuedDecisionTxs[:numTxs], vm.unissuedDecisionTxs[numTxs:]
+		blk, err := vm.newStandardBlock(preferredID, preferredHeight+1, txs)
+		if err != nil {
+			vm.resetTimer()
+			return nil, err
+		}
+		if err := blk.Verify(); err != nil {
+			vm.resetTimer()
+			return nil, err
+		}
+		return blk, nil
+	}
+
+	// If there is a pending atomic tx, build a block with it
+	if len(vm.unissuedAtomicTxs) > 0 {
+		tx := vm.unissuedAtomicTxs[0]
+		vm.unissuedAtomicTxs = vm.unissuedAtomicTxs[1:]
+		blk, err := vm.newAtomicBlock(preferredID, preferredHeight+1, *tx)
+		if err != nil {
+			return nil, err
+		}
+		if err := blk.Verify(); err != nil {
+			vm.resetTimer()
+			return nil, err
+		}
+		return blk, nil
+	}
+
+	// Get the preferred block (which we want to build off)
+	preferred, err := vm.getBlock(preferredID)
+	vm.Ctx.Log.AssertNoError(err)
+
+	// The database if the preferred block were to be accepted
+	var db database.Database
+	// The preferred block should always be a decision block
+	if preferred, ok := preferred.(decision); ok {
+		db = preferred.onAccept()
+	} else {
+		return nil, errInvalidBlockType
+	}
+
+	// The chain time if the preferred block were to be committed
+	currentChainTimestamp, err := vm.getTimestamp(db)
+	if err != nil {
+		return nil, err
+	}
+	if !currentChainTimestamp.Before(timer.MaxTime) {
+		return nil, errEndOfTime
+	}
+
+	// If the chain time would be the time for the next primary network staker to leave,
+	// then we create a block that removes the staker and proposes they receive a staker reward
+	nextValidatorEndtime := timer.MaxTime
+	tx, err := vm.nextStakerStop(db, constants.PrimaryNetworkID)
+	if err != nil {
+		return nil, err
+	}
+	staker, ok := tx.Tx.UnsignedTx.(TimedTx)
+	if !ok {
+		return nil, fmt.Errorf("expected staker tx to be TimedTx but got %T", tx)
+	}
+	nextValidatorEndtime = staker.EndTime()
+	if currentChainTimestamp.Equal(nextValidatorEndtime) {
+		rewardValidatorTx, err := vm.newRewardValidatorTx(tx.Tx.ID())
+		if err != nil {
+			return nil, err
+		}
+		blk, err := vm.newProposalBlock(preferredID, preferredHeight+1, *rewardValidatorTx)
+		if err != nil {
+			return nil, err
+		}
+		return blk, nil
+	}
+
+	// If local time is >= time of the next staker set change,
+	// propose moving the chain time forward
+	nextStakerChangeTime, err := vm.nextStakerChangeTime(db)
+	if err != nil {
+		return nil, err
+	}
+
+	localTime := vm.clock.Time()
+	if !localTime.Before(nextStakerChangeTime) { // local time is at or after the time for the next staker to start/stop
+		advanceTimeTx, err := vm.newAdvanceTimeTx(nextStakerChangeTime)
+		if err != nil {
+			return nil, err
+		}
+		blk, err := vm.newProposalBlock(preferredID, preferredHeight+1, *advanceTimeTx)
+		if err != nil {
+			return nil, err
+		}
+		return blk, nil
+	}
+
+	truncatedTime := localTime.Truncate(roundInterval)
+	// If the truncated time is before the next staker change time
+	// but more than [catchUpTime] past the local wall clock time
+	// then issue an advanceTime proposal to catch up to wall clock time
+	if truncatedTime.Before(nextStakerChangeTime) && truncatedTime.After(currentChainTimestamp.Add(catchUpTime)) {
+		advanceTimeTx, err := vm.newAdvanceTimeTx(truncatedTime)
+		if err != nil {
+			return nil, err
+		}
+		blk, err := vm.newProposalBlock(preferredID, preferredHeight+1, *advanceTimeTx)
+		if err != nil {
+			return nil, err
+		}
+		if err := vm.State.PutBlock(vm.DB, blk); err != nil {
+			return nil, err
+		}
+		return blk, vm.DB.Commit()
+	}
+
+	// Propose adding a new validator but only if their start time is in the
+	// future relative to local time (plus Delta)
+	syncTime := localTime.Add(Delta)
+	for vm.unissuedProposalTxs.Len() > 0 {
+		tx := vm.unissuedProposalTxs.Remove()
+		utx := tx.UnsignedTx.(TimedTx)
+		if !syncTime.After(utx.StartTime()) {
+			return vm.newProposalBlock(preferredID, preferredHeight+1, *tx)
+		}
+		vm.Ctx.Log.Debug("dropping tx to add validator because start time too late")
+	}
+
+	vm.Ctx.Log.Debug("BuildBlock returning error (no blocks)")
+	return nil, errNoPendingBlocks
+}
 
 // ParseBlock implements the snowman.ChainVM interface
 func (vm *VM) ParseBlock(bytes []byte) (snowman.Block, error) {
@@ -567,11 +711,15 @@ func (vm *VM) ParseBlock(bytes []byte) (snowman.Block, error) {
 		// If we have seen this block before, return it with the most up-to-date info
 		return block, nil
 	}
-	if err := vm.State.PutBlock(vm.DB, block); err != nil { // Persist the block
-		return nil, fmt.Errorf("failed to put block due to %w", err)
-	}
+	return block, nil
+}
 
-	return block, vm.DB.Commit()
+// SaveBlock saves [blk] to the database.
+func (vm *VM) SaveBlock(blk snowman.Block) error {
+	if err := vm.State.PutBlock(vm.DB, blk); err != nil {
+		return err
+	}
+	return vm.DB.Commit()
 }
 
 // GetBlock implements the snowman.ChainVM interface

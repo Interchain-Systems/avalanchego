@@ -5,8 +5,7 @@ go 1.14
 require (
 	github.com/AppsFlyer/go-sundheit v0.2.0
 	github.com/Microsoft/go-winio v0.4.14
-	github.com/blocknetdx/go-xrouter v0.8.2
-	github.com/btcsuite/btcd v0.20.1-beta
+	github.com/ava-labs/coreth v0.3.4 // indirect
 	github.com/btcsuite/btcutil v1.0.2
 	github.com/decred/dcrd/dcrec/secp256k1/v3 v3.0.0-20200627015759-01fd2de07837
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible

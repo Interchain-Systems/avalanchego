@@ -22,7 +22,7 @@ import (
 )
 
 func TestUnsignedRewardValidatorTxSemanticVerify(t *testing.T) {
-	vm, _ := defaultVM()
+	vm, _ := defaultVM(t)
 	vm.Ctx.Lock.Lock()
 	defer func() {
 		if err := vm.Shutdown(); err != nil {
@@ -104,7 +104,7 @@ func TestUnsignedRewardValidatorTxSemanticVerify(t *testing.T) {
 }
 
 func TestRewardDelegatorTxSemanticVerify(t *testing.T) {
-	vm, _ := defaultVM()
+	vm, _ := defaultVM(t)
 	vm.Ctx.Lock.Lock()
 	defer func() {
 		if err := vm.Shutdown(); err != nil {

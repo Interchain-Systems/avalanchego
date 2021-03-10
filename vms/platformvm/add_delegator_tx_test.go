@@ -17,7 +17,7 @@ import (
 )
 
 func TestAddDelegatorTxSyntacticVerify(t *testing.T) {
-	vm, _ := defaultVM()
+	vm, _ := defaultVM(t)
 	vm.Ctx.Lock.Lock()
 	defer func() {
 		if err := vm.Shutdown(); err != nil {
@@ -193,7 +193,7 @@ func TestAddDelegatorTxSyntacticVerify(t *testing.T) {
 }
 
 func TestAddDelegatorTxSemanticVerify(t *testing.T) {
-	vm, _ := defaultVM()
+	vm, _ := defaultVM(t)
 	vm.Ctx.Lock.Lock()
 	defer func() {
 		if err := vm.Shutdown(); err != nil {
