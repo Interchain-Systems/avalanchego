@@ -108,10 +108,10 @@ func TestBootstrapperSingleFrontier(t *testing.T) {
 	acceptedIDs := []ids.ID{blkID1}
 
 	vm.GetBlockF = func(blkID ids.ID) (snowman.Block, error) {
-		switch {
-		case blkID.Equals(blkID1):
+		switch blkID {
+		case blkID1:
 			return blk1, nil
-		case blkID.Equals(blkID0):
+		case blkID0:
 			return blk0, nil
 		default:
 			t.Fatal(errUnknownBlock)
@@ -201,15 +201,15 @@ func TestBootstrapperUnknownByzantineResponse(t *testing.T) {
 
 	parsedBlk1 := false
 	vm.GetBlockF = func(blkID ids.ID) (snowman.Block, error) {
-		switch {
-		case blkID.Equals(blkID0):
+		switch blkID {
+		case blkID0:
 			return blk0, nil
-		case blkID.Equals(blkID1):
+		case blkID1:
 			if parsedBlk1 {
 				return blk1, nil
 			}
 			return nil, errUnknownBlock
-		case blkID.Equals(blkID2):
+		case blkID2:
 			return blk2, nil
 		default:
 			t.Fatal(errUnknownBlock)
@@ -237,7 +237,7 @@ func TestBootstrapperUnknownByzantineResponse(t *testing.T) {
 			t.Fatalf("Should have requested block from %s, requested from %s", peerID, vdr)
 		}
 		switch {
-		case vtxID.Equals(blkID1):
+		case vtxID == blkID1:
 		default:
 			t.Fatalf("should have requested blk1")
 		}
@@ -352,20 +352,20 @@ func TestBootstrapperPartialFetch(t *testing.T) {
 	parsedBlk1 := false
 	parsedBlk2 := false
 	vm.GetBlockF = func(blkID ids.ID) (snowman.Block, error) {
-		switch {
-		case blkID.Equals(blkID0):
+		switch blkID {
+		case blkID0:
 			return blk0, nil
-		case blkID.Equals(blkID1):
+		case blkID1:
 			if parsedBlk1 {
 				return blk1, nil
 			}
 			return nil, errUnknownBlock
-		case blkID.Equals(blkID2):
+		case blkID2:
 			if parsedBlk2 {
 				return blk2, nil
 			}
 			return nil, errUnknownBlock
-		case blkID.Equals(blkID3):
+		case blkID3:
 			return blk3, nil
 		default:
 			t.Fatal(errUnknownBlock)
@@ -397,8 +397,8 @@ func TestBootstrapperPartialFetch(t *testing.T) {
 		if !vdr.Equals(peerID) {
 			t.Fatalf("Should have requested block from %s, requested from %s", peerID, vdr)
 		}
-		switch {
-		case vtxID.Equals(blkID1), vtxID.Equals(blkID2):
+		switch vtxID {
+		case blkID1, blkID2:
 		default:
 			t.Fatalf("should have requested blk1 or blk2")
 		}
@@ -414,7 +414,7 @@ func TestBootstrapperPartialFetch(t *testing.T) {
 
 	if err := bs.MultiPut(peerID, *requestID, [][]byte{blkBytes2}); err != nil { // respond with blk2
 		t.Fatal(err)
-	} else if !requested.Equals(blkID1) {
+	} else if requested != blkID1 {
 		t.Fatal("should have requested blk1")
 	}
 
@@ -422,7 +422,7 @@ func TestBootstrapperPartialFetch(t *testing.T) {
 
 	if err := bs.MultiPut(peerID, *requestID, [][]byte{blkBytes1}); err != nil { // respond with blk1
 		t.Fatal(err)
-	} else if !requested.Equals(blkID1) {
+	} else if requested != blkID1 {
 		t.Fatal("should not have requested another block")
 	}
 
@@ -507,20 +507,20 @@ func TestBootstrapperMultiPut(t *testing.T) {
 	parsedBlk1 := false
 	parsedBlk2 := false
 	vm.GetBlockF = func(blkID ids.ID) (snowman.Block, error) {
-		switch {
-		case blkID.Equals(blkID0):
+		switch blkID {
+		case blkID0:
 			return blk0, nil
-		case blkID.Equals(blkID1):
+		case blkID1:
 			if parsedBlk1 {
 				return blk1, nil
 			}
 			return nil, errUnknownBlock
-		case blkID.Equals(blkID2):
+		case blkID2:
 			if parsedBlk2 {
 				return blk2, nil
 			}
 			return nil, errUnknownBlock
-		case blkID.Equals(blkID3):
+		case blkID3:
 			return blk3, nil
 		default:
 			t.Fatal(errUnknownBlock)
@@ -552,8 +552,8 @@ func TestBootstrapperMultiPut(t *testing.T) {
 		if !vdr.Equals(peerID) {
 			t.Fatalf("Should have requested block from %s, requested from %s", peerID, vdr)
 		}
-		switch {
-		case vtxID.Equals(blkID1), vtxID.Equals(blkID2):
+		switch vtxID {
+		case blkID1, blkID2:
 		default:
 			t.Fatalf("should have requested blk1 or blk2")
 		}
@@ -569,7 +569,7 @@ func TestBootstrapperMultiPut(t *testing.T) {
 
 	if err := bs.MultiPut(peerID, *requestID, [][]byte{blkBytes2, blkBytes1}); err != nil { // respond with blk2 and blk1
 		t.Fatal(err)
-	} else if !requested.Equals(blkID2) {
+	} else if requested != blkID2 {
 		t.Fatal("should not have requested another block")
 	}
 
@@ -643,12 +643,12 @@ func TestBootstrapperFilterAccepted(t *testing.T) {
 	blkIDs := []ids.ID{blkID0, blkID1, blkID2}
 
 	vm.GetBlockF = func(blkID ids.ID) (snowman.Block, error) {
-		switch {
-		case blkID.Equals(blkID0):
+		switch blkID {
+		case blkID0:
 			return blk0, nil
-		case blkID.Equals(blkID1):
+		case blkID1:
 			return blk1, nil
-		case blkID.Equals(blkID2):
+		case blkID2:
 			return nil, errUnknownBlock
 		}
 		t.Fatal(errUnknownBlock)
@@ -729,15 +729,15 @@ func TestBootstrapperFinalized(t *testing.T) {
 	parsedBlk1 := false
 	parsedBlk2 := false
 	vm.GetBlockF = func(blkID ids.ID) (snowman.Block, error) {
-		switch {
-		case blkID.Equals(blkID0):
+		switch blkID {
+		case blkID0:
 			return blk0, nil
-		case blkID.Equals(blkID1):
+		case blkID1:
 			if parsedBlk1 {
 				return blk1, nil
 			}
 			return nil, errUnknownBlock
-		case blkID.Equals(blkID2):
+		case blkID2:
 			if parsedBlk2 {
 				return blk2, nil
 			}
@@ -769,7 +769,7 @@ func TestBootstrapperFinalized(t *testing.T) {
 		if !vdr.Equals(peerID) {
 			t.Fatalf("Should have requested block from %s, requested from %s", peerID, vdr)
 		}
-		requestIDs[vtxID.Key()] = reqID
+		requestIDs[vtxID] = reqID
 	}
 
 	vm.CantBootstrapping = false
@@ -778,7 +778,7 @@ func TestBootstrapperFinalized(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reqID, ok := requestIDs[blkID2.Key()]
+	reqID, ok := requestIDs[blkID2]
 	if !ok {
 		t.Fatalf("should have requested blk2")
 	}
@@ -789,7 +789,7 @@ func TestBootstrapperFinalized(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reqID, ok = requestIDs[blkID1.Key()]
+	reqID, ok = requestIDs[blkID1]
 	if !ok {
 		t.Fatalf("should have requested blk1")
 	}

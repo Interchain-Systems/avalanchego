@@ -7,6 +7,7 @@ import (
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/constants"
 	"github.com/ava-labs/avalanchego/vms/avm"
+	"github.com/ava-labs/avalanchego/vms/evm"
 	"github.com/ava-labs/avalanchego/vms/nftfx"
 	"github.com/ava-labs/avalanchego/vms/platformvm"
 	"github.com/ava-labs/avalanchego/vms/propertyfx"
@@ -19,7 +20,7 @@ func Aliases(genesisBytes []byte) (map[string][]string, map[ids.ID][]string, map
 	generalAliases := map[string][]string{
 		"vm/" + platformvm.ID.String():             {"vm/platform"},
 		"vm/" + avm.ID.String():                    {"vm/avm"},
-		"vm/" + EVMID.String():                     {"vm/evm"},
+		"vm/" + evm.ID.String():                    {"vm/evm"},
 		"vm/" + timestampvm.ID.String():            {"vm/timestamp"},
 		"bc/" + constants.PlatformChainID.String(): {"P", "platform", "bc/P", "bc/platform"},
 	}
@@ -37,7 +38,7 @@ func Aliases(genesisBytes []byte) (map[string][]string, map[ids.ID][]string, map
 	}
 
 	genesis := &platformvm.Genesis{} // TODO let's not re-create genesis to do aliasing
-	if err := platformvm.GenesisCodec.Unmarshal(genesisBytes, genesis); err != nil {
+	if _, err := platformvm.GenesisCodec.Unmarshal(genesisBytes, genesis); err != nil {
 		return nil, nil, nil, err
 	}
 	if err := genesis.Initialize(); err != nil {
@@ -46,16 +47,16 @@ func Aliases(genesisBytes []byte) (map[string][]string, map[ids.ID][]string, map
 
 	for _, chain := range genesis.Chains {
 		uChain := chain.UnsignedTx.(*platformvm.UnsignedCreateChainTx)
-		switch {
-		case avm.ID.Equals(uChain.VMID):
+		switch uChain.VMID {
+		case avm.ID:
 			generalAliases["bc/"+chain.ID().String()] = []string{"X", "avm", "bc/X", "bc/avm"}
-			chainAliases[chain.ID().Key()] = []string{"X", "avm"}
-		case EVMID.Equals(uChain.VMID):
+			chainAliases[chain.ID()] = []string{"X", "avm"}
+		case evm.ID:
 			generalAliases["bc/"+chain.ID().String()] = []string{"C", "evm", "bc/C", "bc/evm"}
-			chainAliases[chain.ID().Key()] = []string{"C", "evm"}
-		case timestampvm.ID.Equals(uChain.VMID):
+			chainAliases[chain.ID()] = []string{"C", "evm"}
+		case timestampvm.ID:
 			generalAliases["bc/"+chain.ID().String()] = []string{"bc/timestamp"}
-			chainAliases[chain.ID().Key()] = []string{"timestamp"}
+			chainAliases[chain.ID()] = []string{"timestamp"}
 		}
 	}
 	return generalAliases, chainAliases, vmAliases, nil

@@ -34,7 +34,6 @@ type snowmanBlock struct {
 
 func (n *snowmanBlock) AddChild(child Block) {
 	childID := child.ID()
-	childKey := childID.Key()
 
 	// if the snowball instance is nil, this is the first child. So the instance
 	// should be initialized.
@@ -46,7 +45,7 @@ func (n *snowmanBlock) AddChild(child Block) {
 		n.sb.Add(childID)
 	}
 
-	n.children[childKey] = child
+	n.children[childID] = child
 }
 
 func (n *snowmanBlock) Accepted() bool {

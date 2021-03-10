@@ -59,7 +59,7 @@ type Transitive struct {
 
 // Initialize implements the Engine interface
 func (t *Transitive) Initialize(config Config) error {
-	config.Ctx.Log.Info("Initializing consensus engine")
+	config.Ctx.Log.Info("initializing consensus engine")
 
 	t.Params = config.Params
 	t.Consensus = config.Consensus
@@ -230,8 +230,8 @@ func (t *Transitive) GetFailed(vdr ids.ShortID, requestID uint32) error {
 	t.vtxBlocked.Abandon(vtxID)
 
 	if t.outstandingVtxReqs.Len() == 0 {
-		for txIDKey := range t.missingTxs {
-			t.txBlocked.Abandon(ids.NewID(txIDKey))
+		for txID := range t.missingTxs {
+			t.txBlocked.Abandon(txID)
 		}
 		t.missingTxs.Clear()
 	}
@@ -480,8 +480,8 @@ func (t *Transitive) issue(vtx avalanche.Vertex) error {
 
 	if t.outstandingVtxReqs.Len() == 0 {
 		// There are no outstanding vertex requests but we don't have these transactions, so we're not getting them.
-		for txIDKey := range t.missingTxs {
-			t.txBlocked.Abandon(ids.NewID(txIDKey))
+		for txID := range t.missingTxs {
+			t.txBlocked.Abandon(txID)
 		}
 		t.missingTxs.Clear()
 	}

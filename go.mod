@@ -5,6 +5,8 @@ go 1.14
 require (
 	github.com/AppsFlyer/go-sundheit v0.2.0
 	github.com/Microsoft/go-winio v0.4.14
+	github.com/blocknetdx/go-xrouter v0.8.2
+	github.com/btcsuite/btcd v0.20.1-beta
 	github.com/btcsuite/btcutil v1.0.2
 	github.com/decred/dcrd/dcrec/secp256k1/v3 v3.0.0-20200627015759-01fd2de07837
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
@@ -27,6 +29,8 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/client_golang v1.7.1
 	github.com/rs/cors v1.7.0
+	github.com/spf13/pflag v1.0.5
+	github.com/spf13/viper v1.7.1
 	github.com/stretchr/objx v0.2.0 // indirect
 	github.com/stretchr/testify v1.4.0
 	github.com/syndtr/goleveldb v1.0.1-0.20200815110645-5c35d600f0ca
@@ -35,4 +39,7 @@ require (
 	golang.org/x/sys v0.0.0-20200824131525-c12d262b63d8 // indirect
 	google.golang.org/genproto v0.0.0-20200218151345-dad8c97a84f5 // indirect
 	google.golang.org/grpc v1.29.1
+	gotest.tools v2.2.0+incompatible
 )
+
+replace github.com/btcsuite/btcd => github.com/blocknetdx/btcd v0.20.1-beta.0.20200618032145-59a950423708

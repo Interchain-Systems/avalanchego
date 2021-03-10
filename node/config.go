@@ -8,6 +8,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/genesis"
+	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/nat"
 	"github.com/ava-labs/avalanchego/snow/consensus/avalanche"
 	"github.com/ava-labs/avalanchego/snow/networking/benchlist"
@@ -76,6 +77,7 @@ type Config struct {
 	KeystoreAPIEnabled bool
 	MetricsAPIEnabled  bool
 	HealthAPIEnabled   bool
+	XRouterAPIEnabled  bool
 
 	// Logging configuration
 	LoggingConfig logging.Config
@@ -108,4 +110,15 @@ type Config struct {
 	// Throttling incoming connections
 	ConnMeterResetDuration time.Duration
 	ConnMeterMaxConns      int
+
+	// Subnet Whitelist
+	WhitelistedSubnets ids.Set
+
+	// Restart on disconnect settings
+	RestartOnDisconnected      bool
+	DisconnectedCheckFreq      time.Duration
+	DisconnectedRestartTimeout time.Duration
+
+	// Coreth
+	CorethConfig string
 }
