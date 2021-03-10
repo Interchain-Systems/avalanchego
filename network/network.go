@@ -151,32 +151,12 @@ type network struct {
 	myIPs map[string]struct{} // set of IPs that resulted in my ID.
 	peers map[[20]byte]*peer
 
-	// ensures the close of the network only happens once.
-	closeOnce sync.Once
-
-	// True if the node should restart if it detects it's disconnected from all peers
-	restartOnDisconnected bool
-
-	// Signals the connection checker to close when Network is shutdown.
-	// See restartOnDisconnect()
-	connectedCheckerCloser chan struct{}
-
-	// Used to monitor whether the node is connected to peers. If the node has
-	// been connected to at least one peer in the last [disconnectedRestartTimeout]
-	// then connectedMeter.Ticks() is non-zero.
-	connectedMeter timer.TimedMeter
-
-	// How often we check that we're connected to at least one peer.
-	// Used to update [connectedMeter].
-	// If 0, node will not restart even if it has no peers.
-	disconnectedCheckFreq time.Duration
-
-	// restarter can shutdown and restart the node.
-	// If nil, node will not restart even if it has no peers.
-	restarter utils.Restarter
-
-	hasMasked        bool
-	maskedValidators ids.ShortSet
+	// Node ID --> Next session ID to use with this peer
+	// Invariant: We should only drop a connection to a peer
+	// in favor of connections whose session ID is 0 or >=
+	// the current session ID. The next session ID is incremented
+	// each time we connect to a given peer.
+	nextSessionID map[[20]byte]uint32
 }
 
 // NewDefaultNetwork returns a new Network implementation with the provided
@@ -328,6 +308,7 @@ func NewNetwork(
 		retryDelay:                         make(map[string]time.Duration),
 		myIPs:                              map[string]struct{}{ip.IP().String(): {}},
 		peers:                              make(map[[20]byte]*peer),
+		nextSessionID:                      make(map[[20]byte]uint32),
 		readBufferSize:                     readBufferSize,
 		readHandshakeTimeout:               readHandshakeTimeout,
 		connMeter:                          NewConnMeter(connMeterResetDuration, connMeterCacheSize),
@@ -1103,10 +1084,9 @@ func (n *network) tryAddPeer(p *peer) error {
 	if p.id.Equals(n.id) {
 		if !ip.IsZero() {
 			// if n.ip is less useful than p.ip set it to this IP
-			if n.ip.IP().IsZero() {
-				n.log.Info("setting my ip to %s because I was able to connect to myself through this channel",
-					p.ip)
-				n.ip.Update(p.ip)
+			if n.ip.IsZero() {
+				n.log.Info("setting own IP to %s", p.ip)
+				n.ip = p.ip
 			}
 			str := ip.String()
 			delete(n.disconnectedIPs, str)
@@ -1116,19 +1096,6 @@ func (n *network) tryAddPeer(p *peer) error {
 		return errPeerIsMyself
 	}
 
-	// If I am already connected to this peer, then I should close this new
-	// connection.
-	if _, ok := n.peers[key]; ok {
-		if !ip.IsZero() {
-			str := ip.String()
-			delete(n.disconnectedIPs, str)
-			delete(n.retryDelay, str)
-		}
-		return fmt.Errorf("duplicated connection from %s at %s", p.id.PrefixedString(constants.NodeIDPrefix), ip)
-	}
-
-	n.peers[key] = p
-	n.numPeers.Set(float64(len(n.peers)))
 	p.Start()
 	return nil
 }
@@ -1156,38 +1123,9 @@ func (n *network) validatorIPs() []utils.IPDesc {
 // called after disconnected is called with this peer.
 // assumes the stateLock is not held.
 func (n *network) connected(p *peer) {
-	p.net.stateLock.Lock()
-	defer p.net.stateLock.Unlock()
-
-	p.connected.SetValue(true)
-
-	peerVersion := p.versionStruct.GetValue().(version.Version)
-
-	if n.hasMasked {
-		if peerVersion.Before(minimumUnmaskedVersion) {
-			if err := n.vdrs.MaskValidator(p.id); err != nil {
-				n.log.Error("failed to mask validator %s due to %s", p.id, err)
-			}
-		} else {
-			if err := n.vdrs.RevealValidator(p.id); err != nil {
-				n.log.Error("failed to reveal validator %s due to %s", p.id, err)
-			}
-		}
-		n.log.Verbo("The new staking set is:\n%s", n.vdrs)
-	} else {
-		if peerVersion.Before(minimumUnmaskedVersion) {
-			n.maskedValidators.Add(p.id)
-		} else {
-			n.maskedValidators.Remove(p.id)
-		}
-	}
-
-	ip := p.getIP()
-	n.log.Debug("connected to %s at %s", p.id, ip)
-
-	if !ip.IsZero() {
-		str := ip.String()
-
+	n.log.Debug("connected to %s at %s", p.id, p.ip)
+	if !p.ip.IsZero() {
+		str := p.ip.String()
 		delete(n.disconnectedIPs, str)
 		delete(n.retryDelay, str)
 		n.connectedIPs[str] = struct{}{}
