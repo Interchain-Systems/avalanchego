@@ -4,18 +4,26 @@
 package network
 
 import (
-	"encoding/binary"
+	"fmt"
+	"io"
 	"math"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/ava-labs/avalanchego/utils/constants"
+	"github.com/ava-labs/avalanchego/version"
+
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/formatting"
 	"github.com/ava-labs/avalanchego/utils/wrappers"
 	"github.com/ava-labs/avalanchego/version"
+)
+
+var (
+	VersionPeerNak = version.NewDefaultVersion(constants.PlatformName, 1, 0, 4)
 )
 
 type peer struct {
@@ -69,20 +77,185 @@ type peer struct {
 	incomingSessionID uint32
 
 	tickerCloser chan struct{}
-
-	// ticker processes
-	tickerOnce sync.Once
 }
 
 // assume the stateLock is held
-func (p *peer) Start() {
-	go p.ReadMessages()
-	go p.WriteMessages()
+func (p *peer) Start() error {
+	if err := p.conn.SetReadDeadline(p.net.clock.Time().Add(p.net.readPeerVersionTimeout)); err != nil {
+		p.net.log.Verbo("error on setting the connection read timeout %s", err)
+		return err
+	}
+
+	// send the version and get a msg from receiver..
+	msg, err := p.verionAck()
+	if err != nil {
+
+		// old logic (needs to be removed)
+		// if we get an EOF from a versionAck, remote peer is an older versioned node.
+		// it's actually (probably) closing a connection to us b/c we are already peered.
+		// if that happens, then lets check if we are peered.
+		if err == io.EOF {
+			if p.net.isPeered(p.id) {
+				return errAlreadyPeered
+			}
+		}
+		return err
+	}
+
+	switch msg.Op() {
+	case PeerList:
+		// handle old self check logic
+		if p.id.Equals(p.net.id) {
+			return errPeerIsMyself
+		}
+
+		// if the first message is not version.  fall back to normal processing logic.
+		// only acceptable option at this point would be a PeerList request
+		// lets take care of the peer request
+		go p.handle(msg)
+
+		go p.ReadMessages()
+
+		// we need to ask for a version.
+		go p.Version()
+		go p.WriteMessages()
+
+		go p.requestFinishHandshake()
+		go p.sendPings()
+
+		return nil
+	case Version:
+	// fallthrough
+	default:
+		// handle old self check logic
+		if p.id.Equals(p.net.id) {
+			return errPeerIsMyself
+		}
+
+		// We didn't get a Version msg.  This is unexpected..
+		return errVersionExpected
+	}
+
+	// parse and check if version is correct.
+	peerVersionStr := msg.Get(VersionStr).(string)
+	peerVersion, err := p.net.parser.Parse(peerVersionStr)
+	if err != nil {
+		return err
+	}
+
+	// add peer version msg..
+	p.checkPeerVersion(peerVersion)
+
+	// if the client is not running correct version then fallback logic start the normal processing.
+	if peerVersion.Before(VersionPeerNak) {
+		// handle old self check logic
+		if p.id.Equals(p.net.id) {
+			return errPeerIsMyself
+		}
+
+		// process the version message
+		go p.handle(msg)
+
+		go p.ReadMessages()
+
+		// ask for a peer list
+		go p.GetPeerList()
+		go p.WriteMessages()
+
+		go p.requestFinishHandshake()
+		go p.sendPings()
+
+		return nil
+	}
+
+	// set my IP from the Version msg.
+	p.ip = msg.Get(IP).(utils.IPDesc)
+	// register the peers version.
+	p.versionStr.SetValue(peerVersion.String())
+
+	return p.processVersionNak()
 }
 
-func (p *peer) StartTicker() {
-	go p.requestFinishHandshake()
+func (p *peer) processVersionNak() error {
+	if p.id.Equals(p.net.id) {
+		// we already peered respond to client.
+		_, err := p.versionNack(SelfPeered, nil)
+		if err != nil {
+			// it would not matter if we didn't send the nack..
+			// we will end up disconnecting the connection.
+			p.net.log.Verbo("unable to send version nak %s", err)
+		}
+		return errPeerIsMyself
+	}
+
+	// am I already peered to them?
+	if p.net.isPeered(p.id) {
+		// we already peered respond to client.
+		_, err := p.versionNack(AlreadyPeered, nil)
+		if err != nil {
+			// it would not matter if we didn't send the nack..
+			// we will end up disconnecting the connection.
+			p.net.log.Verbo("unable to send version nak %s", err)
+		}
+		return errAlreadyPeered
+	}
+
+	ips := p.net.validatorIPsNoLock()
+	// We are not peered, so send client VersionNak
+	msg, err := p.versionNack(Success, ips)
+	if err != nil {
+		return errVersionNakExpected
+	}
+
+	// test the versionNak to see if we are safe to peer.
+	errorNo := msg.Get(ErrorNo).(uint32)
+	switch errorNo {
+	case AlreadyPeered:
+		// the peer responded we are already peered to them.
+		return errAlreadyPeered
+	case SelfPeered:
+		// the peer responded we are already peered to them.
+		return errPeerIsMyself
+	case Success:
+		// fall through
+	default:
+		// not expected -- It wasn't a Success, so we punt..
+		return fmt.Errorf("version nak errorNo=%d", errorNo)
+	}
+
+	peers := msg.Get(Peers).([]utils.IPDesc)
+
+	// we now have the version and peer list
+	p.gotVersion.SetValue(true)
+	p.gotPeerList.SetValue(true)
+
+	// note that we are connected. (same as tryMarkConnected)
+	p.connected.SetValue(true)
+
+	// register with network this peer connected.
+	p.net.connected(p)
+
+	go p.ReadMessages()
+	go p.WriteMessages()
+
 	go p.sendPings()
+
+	// track the peers
+	go func() {
+		for _, ip := range peers {
+			if !ip.Equal(p.net.ip.IP()) &&
+				!ip.IsZero() &&
+				(p.net.allowPrivateIPs || !ip.IsPrivate()) {
+
+				// we need a state lock to call track
+				p.net.stateLock.Lock()
+				p.net.track(ip)
+				p.net.stateLock.Unlock()
+			}
+		}
+	}()
+
+	return nil
 }
 
 func (p *peer) sendPings() {
@@ -209,8 +382,6 @@ func (p *peer) ReadMessages() {
 func (p *peer) WriteMessages() {
 	defer p.Close()
 
-	p.Version()
-
 	for msg := range p.sender {
 		p.net.log.Verbo("sending new message to %s:\n%s",
 			p.id,
@@ -219,18 +390,10 @@ func (p *peer) WriteMessages() {
 		atomic.AddInt64(&p.pendingBytes, -int64(len(msg)))
 		atomic.AddInt64(&p.net.pendingBytes, -int64(len(msg)))
 
-		msgb := [wrappers.IntLen]byte{}
-		binary.BigEndian.PutUint32(msgb[:], uint32(len(msg)))
-		for _, byteSlice := range [][]byte{msgb[:], msg} {
-			for len(byteSlice) > 0 {
-				written, err := p.conn.Write(byteSlice)
-				if err != nil {
-					p.net.log.Verbo("error writing to %s at %s due to: %s", p.id, p.getIP(), err)
-					return
-				}
-				p.tickerOnce.Do(p.StartTicker)
-				byteSlice = byteSlice[written:]
-			}
+		err := p.sendRaw(msg)
+		if err != nil {
+			p.net.log.Verbo("error writing to %s at %s due to: %s", p.id, p.ip, err)
+			return
 		}
 		atomic.StoreInt64(&p.lastSent, p.net.clock.Time().Unix())
 	}
@@ -527,6 +690,7 @@ func (p *peer) version(msg Msg) {
 		p.discardIP()
 		return
 	}
+<<<<<<< HEAD
 	if p.net.version.Before(peerVersion) {
 		if p.net.beacons.Contains(p.id) {
 			p.net.log.Info("beacon %s attempting to connect with newer version %s. You may want to update your client",
@@ -538,6 +702,11 @@ func (p *peer) version(msg Msg) {
 				peerVersion)
 		}
 	}
+=======
+
+	p.checkPeerVersion(peerVersion)
+
+>>>>>>> version_conversation
 	if err := p.net.version.Compatible(peerVersion); err != nil {
 		p.net.log.Debug("peer version not compatible due to %s", err)
 
@@ -868,6 +1037,137 @@ func (p *peer) discardMyIP() {
 		p.net.stateLock.Unlock()
 	}
 	p.Close()
+}
+
+// Read a single message from the connection.
+func (p *peer) readMsg() (Msg, error) {
+	pendingBuffer := wrappers.Packer{}
+	readBuffer, err := p.readFull(wrappers.IntLen)
+	if err != nil {
+		return nil, err
+	}
+	if len(readBuffer) != 4 {
+		return nil, fmt.Errorf("read buffer failed")
+	}
+
+	pendingBuffer.Bytes = append(pendingBuffer.Bytes, readBuffer...)
+
+	// lets figure out the size of the message..
+	size := pendingBuffer.UnpackInt()
+
+	// now lets read the message.
+	readBuffer, err = p.readFull(size)
+	if err != nil {
+		return nil, err
+	}
+	if uint32(len(readBuffer)) != size {
+		return nil, fmt.Errorf("read buffer failed")
+	}
+
+	pendingBuffer.Bytes = append(pendingBuffer.Bytes, readBuffer...)
+
+	// reset the offset after the size read.
+	pendingBuffer.Offset = 0
+
+	// unpack the bytes or error out...
+	msgBytes := pendingBuffer.UnpackBytes()
+	if pendingBuffer.Errored() {
+		return nil, pendingBuffer.Err
+	}
+
+	msg, err := p.net.b.Parse(msgBytes)
+	if err != nil {
+		p.net.log.Debug("failed to parse new message from %s:\n%s\n%s",
+			p.id,
+			formatting.DumpBytes{Bytes: msgBytes},
+			err)
+		return nil, err
+	}
+
+	return msg, nil
+}
+
+// send the raw msg bytes
+func (p *peer) sendRaw(msg []byte) error {
+
+	// pack the message with a header.
+	packer := wrappers.Packer{Bytes: make([]byte, len(msg)+wrappers.IntLen)}
+	packer.PackBytes(msg)
+
+	// transmit the data..
+	msg = packer.Bytes
+	for len(msg) > 0 {
+		written, err := p.conn.Write(msg)
+		if err != nil {
+			return err
+		}
+		msg = msg[written:]
+	}
+	return nil
+}
+
+// read from the connection up to len bytes..  Don't stop till we got them.
+func (p *peer) readFull(len uint32) ([]byte, error) {
+	responseBuffer := make([]byte, 0, len)
+	for len > 0 {
+		readBuffer := make([]byte, len)
+		read, err := p.conn.Read(readBuffer)
+		if err != nil {
+			p.net.log.Verbo("error on connection read to %s %s %s", p.id, p.ip, err)
+			return nil, err
+		}
+		len -= uint32(read)
+		responseBuffer = append(responseBuffer, readBuffer[:read]...)
+	}
+	return responseBuffer, nil
+}
+
+// Print out the peer version check message.
+func (p *peer) checkPeerVersion(peerVersion version.Version) {
+	if p.net.version.Before(peerVersion) {
+		if p.net.beacons.Contains(p.id) {
+			p.net.log.Info("beacon %s attempting to connect with newer version %s. You may want to update your client",
+				p.id,
+				peerVersion)
+		} else {
+			p.net.log.Debug("peer %s attempting to connect with newer version %s. You may want to update your client",
+				p.id,
+				peerVersion)
+		}
+	}
+}
+
+// build versionAck and send it.
+func (p *peer) verionAck() (Msg, error) {
+	msg, err := p.net.b.Version(
+		p.net.networkID,
+		p.net.nodeID,
+		p.net.clock.Unix(),
+		p.net.ip.IP(),
+		p.net.version.String(),
+	)
+	p.net.log.AssertNoError(err)
+	return p.sendAndReceive(msg)
+}
+
+// build versionNak and send it
+func (p *peer) versionNack(peerResponse uint32, ips []utils.IPDesc) (Msg, error) {
+	msg, err := p.net.b.VersionNak(
+		peerResponse,
+		ips,
+	)
+	p.net.log.AssertNoError(err)
+	return p.sendAndReceive(msg)
+}
+
+// send the message and read the response.
+func (p *peer) sendAndReceive(msg Msg) (Msg, error) {
+	err := p.sendRaw(msg.Bytes())
+	if err != nil {
+		return nil, err
+	}
+
+	return p.readMsg()
 }
 
 func (p *peer) setIP(ip utils.IPDesc) {

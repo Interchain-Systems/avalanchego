@@ -49,14 +49,16 @@ const (
 	defaultPingFrequency                             = 3 * defaultPingPongTimeout / 4
 	defaultReadBufferSize                            = 16 * 1024
 	defaultReadHandshakeTimeout                      = 15 * time.Second
+	defaultReadPeerVersionTimeout                    = 15 * time.Second
 	defaultConnMeterCacheSize                        = 10000
 )
 
 var (
-	errNetworkClosed = errors.New("network closed")
-	errPeerIsMyself  = errors.New("peer is myself")
-
-	minimumUnmaskedVersion = version.NewDefaultVersion(constants.PlatformName, 1, 1, 0)
+	errNetworkClosed      = errors.New("network closed")
+	errPeerIsMyself       = errors.New("peer is myself")
+	errAlreadyPeered      = errors.New("peered already to node")
+	errVersionExpected    = errors.New("expected version msg")
+	errVersionNakExpected = errors.New("expected version nak msg")
 )
 
 func init() { rand.Seed(time.Now().UnixNano()) }
@@ -136,9 +138,13 @@ type network struct {
 	readHandshakeTimeout               time.Duration
 	connMeterMaxConns                  int
 	connMeter                          ConnMeter
-	executor                           timer.Executor
-	b                                  Builder
-	apricotPhase0Time                  time.Time
+
+	// time for the version ack/nack to complete
+	readPeerVersionTimeout time.Duration
+
+	executor timer.Executor
+
+	b Builder
 
 	// stateLock should never be held when grabbing a peer lock
 	stateLock       sync.RWMutex
@@ -216,6 +222,7 @@ func NewDefaultNetwork(
 		defaultPingFrequency,
 		defaultReadBufferSize,
 		defaultReadHandshakeTimeout,
+		defaultReadPeerVersionTimeout,
 		connMeterResetDuration,
 		defaultConnMeterCacheSize,
 		connMeterMaxConns,
@@ -260,6 +267,7 @@ func NewNetwork(
 	pingFrequency time.Duration,
 	readBufferSize uint32,
 	readHandshakeTimeout time.Duration,
+	readPeerVersionTimeout time.Duration,
 	connMeterResetDuration time.Duration,
 	connMeterCacheSize int,
 	connMeterMaxConns int,
@@ -311,6 +319,7 @@ func NewNetwork(
 		nextSessionID:                      make(map[[20]byte]uint32),
 		readBufferSize:                     readBufferSize,
 		readHandshakeTimeout:               readHandshakeTimeout,
+		readPeerVersionTimeout:             readPeerVersionTimeout,
 		connMeter:                          NewConnMeter(connMeterResetDuration, connMeterCacheSize),
 		connMeterMaxConns:                  connMeterMaxConns,
 		restartOnDisconnected:              restartOnDisconnected,
@@ -710,7 +719,7 @@ func (n *network) Dispatch() error {
 		}
 
 		go func() {
-			err := n.upgrade(
+			id, err := n.upgrade(
 				&peer{
 					net:          n,
 					conn:         conn,
@@ -719,7 +728,7 @@ func (n *network) Dispatch() error {
 				n.serverUpgrader,
 			)
 			if err != nil {
-				n.log.Verbo("failed to upgrade connection: %s", err)
+				n.log.Verbo("failed to upgrade connection %s: %s", id, err)
 			}
 		}()
 	}
@@ -996,23 +1005,27 @@ func (n *network) connectTo(ip utils.IPDesc) {
 		n.retryDelay[str] = delay
 		n.stateLock.Unlock()
 
-		err := n.attemptConnect(ip)
+		id, err := n.attemptConnect(ip)
 		if err == nil {
 			return
 		}
-		n.log.Verbo("error attempting to connect to %s: %s. Reattempting in %s",
-			ip, err, delay)
+		if err == errAlreadyPeered || err == errVersionExpected || err == errPeerIsMyself {
+			n.log.Debug("error attempting to connect %s to %s: %s", id, ip, err)
+			return
+		}
+		n.log.Verbo("error attempting to connect %s to %s: %s. Reattempting in %s",
+			id, ip, err, delay)
 	}
 }
 
 // assumes the stateLock is not held. Returns nil if a connection was able to be
 // established, or the network is closed.
-func (n *network) attemptConnect(ip utils.IPDesc) error {
+func (n *network) attemptConnect(ip utils.IPDesc) (ids.ShortID, error) {
 	n.log.Verbo("attempting to connect to %s", ip)
 
 	conn, err := n.dialer.Dial(ip)
 	if err != nil {
-		return err
+		return ids.ShortEmpty, err
 	}
 	if conn, ok := conn.(*net.TCPConn); ok {
 		if err := conn.SetLinger(0); err != nil {
@@ -1032,24 +1045,24 @@ func (n *network) attemptConnect(ip utils.IPDesc) error {
 
 // assumes the stateLock is not held. Returns an error if the peer's connection
 // wasn't able to be upgraded.
-func (n *network) upgrade(p *peer, upgrader Upgrader) error {
+func (n *network) upgrade(p *peer, upgrader Upgrader) (ids.ShortID, error) {
 	if err := p.conn.SetReadDeadline(time.Now().Add(n.readHandshakeTimeout)); err != nil {
 		_ = p.conn.Close()
 		n.log.Verbo("failed to set the read deadline with %s", err)
-		return err
+		return ids.ShortEmpty, err
 	}
 
 	id, conn, err := upgrader.Upgrade(p.conn)
 	if err != nil {
 		_ = p.conn.Close()
 		n.log.Verbo("failed to upgrade connection with %s", err)
-		return err
+		return id, err
 	}
 
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		_ = p.conn.Close()
 		n.log.Verbo("failed to clear the read deadline with %s", err)
-		return err
+		return id, err
 	}
 
 	p.sender = make(chan []byte, n.sendQueueSize)
@@ -1058,19 +1071,15 @@ func (n *network) upgrade(p *peer, upgrader Upgrader) error {
 
 	if err := n.tryAddPeer(p); err != nil {
 		_ = p.conn.Close()
-		n.log.Debug("dropping peer connection due to: %s", err)
+		n.log.Debug("dropping peer connection %s due to: %s", id, err)
+		return id, err
 	}
-	return nil
+	return id, nil
 }
 
 // assumes the stateLock is not held. Returns an error if the peer couldn't be
 // added.
 func (n *network) tryAddPeer(p *peer) error {
-	n.stateLock.Lock()
-	defer n.stateLock.Unlock()
-
-	ip := p.getIP()
-
 	key := p.id.Key()
 
 	if n.closed.GetValue() {
@@ -1078,6 +1087,49 @@ func (n *network) tryAddPeer(p *peer) error {
 		// attempts are made.
 		return errNetworkClosed
 	}
+
+	// start peer, and check if it works.
+	err := p.Start()
+	if err != nil {
+		n.stateLock.Lock()
+		defer n.stateLock.Unlock()
+
+		// special processing
+		if err == errPeerIsMyself {
+			if !p.getIP().IsZero() {
+				peerIP := p.getIP()
+				// if n.ip is less useful than p.ip set it to this IP
+				if n.ip.IsZero() {
+					n.log.Info("setting my ip to %s because I was able to connect to myself through this channel",
+						peerIP)
+					n.ip.Update(peerIP)
+				}
+				str := peerIP.String()
+				delete(n.disconnectedIPs, str)
+				delete(n.retryDelay, str)
+				n.myIPs[str] = struct{}{}
+			}
+			return errPeerIsMyself
+		}
+
+		if peer, ok := n.peers[key]; ok {
+			// if the peered ip is zero and we are connecting to them (meaning that we have an IP) then we should update to this connect IP
+			// the remote peer connected to us before we connected to them...  And we don't know their IP
+			peerIP := p.getIP()
+			if peer.getIP().IsZero() && !peerIP.IsZero() {
+				peer.setIP(peerIP)
+				n.log.Debug("updating %s to %s", peer.id, peer.getIP())
+			}
+			// we are peering..  this will stop the connection loop
+			return errAlreadyPeered
+		}
+		return err
+	}
+
+	n.stateLock.Lock()
+	defer n.stateLock.Unlock()
+
+	ip := p.getIP()
 
 	// if this connection is myself, then I should delete the connection and
 	// mark the IP as one of mine.
@@ -1096,16 +1148,37 @@ func (n *network) tryAddPeer(p *peer) error {
 		return errPeerIsMyself
 	}
 
+<<<<<<< HEAD
 	p.Start()
+=======
+	// If I am already connected to this peer, then I should close this new
+	// connection.
+	if _, ok := n.peers[key]; ok {
+		if !ip.IsZero() {
+			str := ip.String()
+			delete(n.disconnectedIPs, str)
+			delete(n.retryDelay, str)
+		}
+		return fmt.Errorf("duplicated connection from %s at %s", p.id.PrefixedString(constants.NodeIDPrefix), ip)
+	}
+
+	n.peers[key] = p
+	n.numPeers.Set(float64(len(n.peers)))
+>>>>>>> version_conversation
 	return nil
 }
 
 // assumes the stateLock is not held. Returns the ips of connections that have
 // valid IPs that are marked as validators.
 func (n *network) validatorIPs() []utils.IPDesc {
-	n.stateLock.RLock()
-	defer n.stateLock.RUnlock()
+	n.stateLock.Lock()
+	defer n.stateLock.Unlock()
 
+	return n.validatorIPsNoLock()
+}
+
+// assumes no state lock is held
+func (n *network) validatorIPsNoLock() []utils.IPDesc {
 	ips := make([]utils.IPDesc, 0, len(n.peers))
 	for _, peer := range n.peers {
 		ip := peer.getIP()
@@ -1160,6 +1233,16 @@ func (n *network) disconnected(p *peer) {
 	if p.connected.GetValue() {
 		n.router.Disconnected(p.id)
 	}
+}
+
+// assumes stateLock is held
+// iterate the peers and find if we are already peered to this node.
+func (n *network) isPeered(id ids.ShortID) bool {
+	n.stateLock.Lock()
+	defer n.stateLock.Unlock()
+
+	_, exists := n.peers[id.Key()]
+	return exists
 }
 
 // holds onto the peer object as a result of helper functions

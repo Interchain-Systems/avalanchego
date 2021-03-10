@@ -25,7 +25,17 @@ const (
 	ContainerBytes                   // Used for gossiping
 	ContainerIDs                     // Used for querying
 	MultiContainerBytes              // Used in MultiPut
+<<<<<<< HEAD
 	SessionID                        // Used in handshake
+=======
+	ErrorNo                          // Used in VersionNak
+)
+
+const (
+	Success       uint32 = iota // Nothing is wrong with peering
+	AlreadyPeered               // We already Peered
+	SelfPeered                  // peering to myself
+>>>>>>> version_conversation
 )
 
 // Packer returns the packer function that can be used to pack this field.
@@ -59,6 +69,8 @@ func (f Field) Packer() func(*wrappers.Packer, interface{}) {
 		return wrappers.TryPackHashes
 	case MultiContainerBytes:
 		return wrappers.TryPack2DBytes
+	case ErrorNo:
+		return wrappers.TryPackInt
 	default:
 		return nil
 	}
@@ -95,6 +107,8 @@ func (f Field) Unpacker() func(*wrappers.Packer) interface{} {
 		return wrappers.TryUnpackHashes
 	case MultiContainerBytes:
 		return wrappers.TryUnpack2DBytes
+	case ErrorNo:
+		return wrappers.TryUnpackInt
 	default:
 		return nil
 	}
@@ -130,6 +144,8 @@ func (f Field) String() string {
 		return "Container IDs"
 	case MultiContainerBytes:
 		return "MultiContainerBytes"
+	case ErrorNo:
+		return "ErrorNumber"
 	default:
 		return "Unknown Field"
 	}
@@ -174,6 +190,8 @@ func (op Op) String() string {
 		return "pull_query"
 	case Chits:
 		return "chits"
+	case VersionNak:
+		return "version_nak"
 	default:
 		return "Unknown Op"
 	}
@@ -201,6 +219,7 @@ const (
 	PushQuery
 	PullQuery
 	Chits
+	VersionNak
 )
 
 // Defines the messages that can be sent/received with this network
@@ -226,5 +245,7 @@ var (
 		PushQuery: {ChainID, RequestID, Deadline, ContainerID, ContainerBytes},
 		PullQuery: {ChainID, RequestID, Deadline, ContainerID},
 		Chits:     {ChainID, RequestID, ContainerIDs},
+		// version nak
+		VersionNak: {ErrorNo, Peers},
 	}
 )
