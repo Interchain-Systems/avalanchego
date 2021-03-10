@@ -4,6 +4,8 @@
 package platformvm
 
 import (
+	"fmt"
+
 	"github.com/ava-labs/avalanchego/database/versiondb"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/vms/components/core"
@@ -20,11 +22,11 @@ type StandardBlock struct {
 // initialize this block
 func (sb *StandardBlock) initialize(vm *VM, bytes []byte) error {
 	if err := sb.SingleDecisionBlock.initialize(vm, bytes); err != nil {
-		return err
+		return fmt.Errorf("failed to initialize: %w", err)
 	}
 	for _, tx := range sb.Txs {
 		if err := tx.Sign(vm.codec, nil); err != nil {
-			return err
+			return fmt.Errorf("failed to sign block: %w", err)
 		}
 	}
 	return nil
@@ -43,7 +45,7 @@ func (sb *StandardBlock) Verify() error {
 	if !ok {
 		if err := sb.Reject(); err == nil {
 			if err := sb.vm.DB.Commit(); err != nil {
-				return err
+				return fmt.Errorf("failed to commit VM's database: %w", err)
 			}
 		} else {
 			sb.vm.DB.Abort()
@@ -60,24 +62,25 @@ func (sb *StandardBlock) Verify() error {
 		if !ok {
 			return errWrongTxType
 		}
+		txID := tx.ID()
 		onAccept, err := utx.SemanticVerify(sb.vm, sb.onAcceptDB, tx)
 		if err != nil {
-			sb.vm.droppedTxCache.Put(tx.ID(), nil) // cache tx as dropped
+			sb.vm.droppedTxCache.Put(txID, err.Error()) // cache tx as dropped
 			if err := sb.Reject(); err == nil {
 				if err := sb.vm.DB.Commit(); err != nil {
-					return err
+					return fmt.Errorf("failed to commit VM's database: %w", err)
 				}
 			} else {
 				sb.vm.DB.Abort()
 			}
 			return err
 		}
-		if txBytes, err := sb.vm.codec.Marshal(tx); err != nil {
-			return err
-		} else if err := sb.vm.putTx(sb.onAcceptDB, tx.ID(), txBytes); err != nil {
-			return err
-		} else if err := sb.vm.putStatus(sb.onAcceptDB, tx.ID(), Committed); err != nil {
-			return err
+		if txBytes, err := sb.vm.codec.Marshal(codecVersion, tx); err != nil {
+			return fmt.Errorf("failed to marshal tx %s: %w", txID, err)
+		} else if err := sb.vm.putTx(sb.onAcceptDB, txID, txBytes); err != nil {
+			return fmt.Errorf("failed to put tx %s: %w", txID, err)
+		} else if err := sb.vm.putStatus(sb.onAcceptDB, txID, Committed); err != nil {
+			return fmt.Errorf("failed to put tx %s status: %w", txID, err)
 		} else if onAccept != nil {
 			funcs = append(funcs, onAccept)
 		}
@@ -89,16 +92,26 @@ func (sb *StandardBlock) Verify() error {
 		sb.onAcceptFunc = func() error {
 			for _, f := range funcs {
 				if err := f(); err != nil {
-					return err
+					return fmt.Errorf("failed to execute onAcceptFunc: %w", err)
 				}
 			}
 			return nil
 		}
 	}
 
-	sb.vm.currentBlocks[sb.ID().Key()] = sb
+	sb.vm.currentBlocks[sb.ID()] = sb
 	sb.parentBlock().addChild(sb)
 	return nil
+}
+
+// Reject implements the snowman.Block interface
+func (sb *StandardBlock) Reject() error {
+	for _, tx := range sb.Txs {
+		if err := sb.vm.mempool.IssueTx(tx); err != nil {
+			sb.vm.Ctx.Log.Debug("failed to reissue tx %q due to: %s", tx.ID(), err)
+		}
+	}
+	return sb.SingleDecisionBlock.Reject()
 }
 
 // newStandardBlock returns a new *StandardBlock where the block's parent, a
@@ -119,9 +132,9 @@ func (vm *VM) newStandardBlock(parentID ids.ID, height uint64, txs []*Tx) (*Stan
 	// We serialize this block as a Block so that it can be deserialized into a
 	// Block
 	blk := Block(sb)
-	bytes, err := vm.codec.Marshal(&blk)
+	bytes, err := vm.codec.Marshal(codecVersion, &blk)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to marshal block: %w", err)
 	}
 	sb.Block.Initialize(bytes, vm.SnowmanVM)
 	return sb, nil

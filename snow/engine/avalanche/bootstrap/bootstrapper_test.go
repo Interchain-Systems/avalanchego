@@ -50,7 +50,9 @@ func newConfig(t *testing.T) (Config, ids.ShortID, *common.SenderTest, *vertex.T
 	sender.CantGetAcceptedFrontier = false
 
 	peer := ids.GenerateTestShortID()
-	peers.AddWeight(peer, 1)
+	if err := peers.AddWeight(peer, 1); err != nil {
+		t.Fatal(err)
+	}
 
 	vtxBlocker, _ := queue.New(prefixdb.New([]byte("vtx"), db))
 	txBlocker, _ := queue.New(prefixdb.New([]byte("tx"), db))
@@ -121,16 +123,15 @@ func TestBootstrapperSingleFrontier(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	acceptedIDs := ids.Set{}
-	acceptedIDs.Add(vtxID0, vtxID1, vtxID2)
+	acceptedIDs := []ids.ID{vtxID0, vtxID1, vtxID2}
 
 	manager.GetVertexF = func(vtxID ids.ID) (avalanche.Vertex, error) {
-		switch {
-		case vtxID.Equals(vtxID0):
+		switch vtxID {
+		case vtxID0:
 			return vtx0, nil
-		case vtxID.Equals(vtxID1):
+		case vtxID1:
 			return vtx1, nil
-		case vtxID.Equals(vtxID2):
+		case vtxID2:
 			return vtx2, nil
 		default:
 			t.Fatal(errUnknownVertex)
@@ -154,7 +155,9 @@ func TestBootstrapperSingleFrontier(t *testing.T) {
 	vm.CantBootstrapping = false
 	vm.CantBootstrapped = false
 
-	bs.ForceAccepted(acceptedIDs)
+	if err := bs.ForceAccepted(acceptedIDs); err != nil {
+		t.Fatal(err)
+	}
 
 	switch {
 	case !*finished:
@@ -221,14 +224,13 @@ func TestBootstrapperByzantineResponses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	acceptedIDs := ids.Set{}
-	acceptedIDs.Add(vtxID1)
+	acceptedIDs := []ids.ID{vtxID1}
 
 	manager.GetVertexF = func(vtxID ids.ID) (avalanche.Vertex, error) {
-		switch {
-		case vtxID.Equals(vtxID1):
+		switch vtxID {
+		case vtxID1:
 			return vtx1, nil
-		case vtxID.Equals(vtxID0):
+		case vtxID0:
 			return nil, errUnknownVertex
 		default:
 			t.Fatal(errUnknownVertex)
@@ -243,7 +245,7 @@ func TestBootstrapperByzantineResponses(t *testing.T) {
 		case !vdr.Equals(peerID):
 			t.Fatalf("Should have requested vertex from %s, requested from %s",
 				peerID, vdr)
-		case !vtxID.Equals(vtxID0):
+		case vtxID != vtxID0:
 			t.Fatalf("should have requested vtx0")
 		}
 		*requestID = reqID
@@ -269,25 +271,27 @@ func TestBootstrapperByzantineResponses(t *testing.T) {
 
 	if err := bs.ForceAccepted(acceptedIDs); err != nil { // should request vtx0
 		t.Fatal(err)
-	} else if !reqVtxID.Equals(vtxID0) {
+	} else if reqVtxID != vtxID0 {
 		t.Fatalf("should have requested vtxID0 but requested %s", reqVtxID)
 	}
 
 	oldReqID := *requestID
-	if err := bs.MultiPut(peerID, *requestID, [][]byte{vtxBytes2}); err != nil { // send unexpected vertex
+	err = bs.MultiPut(peerID, *requestID, [][]byte{vtxBytes2})
+	switch {
+	case err != nil: // send unexpected vertex
 		t.Fatal(err)
-	} else if *requestID == oldReqID {
+	case *requestID == oldReqID:
 		t.Fatal("should have issued new request")
-	} else if !reqVtxID.Equals(vtxID0) {
+	case reqVtxID != vtxID0:
 		t.Fatalf("should have requested vtxID0 but requested %s", reqVtxID)
 	}
 
 	oldReqID = *requestID
 	manager.GetVertexF = func(vtxID ids.ID) (avalanche.Vertex, error) {
-		switch {
-		case vtxID.Equals(vtxID1):
+		switch vtxID {
+		case vtxID1:
 			return vtx1, nil
-		case vtxID.Equals(vtxID0):
+		case vtxID0:
 			return vtx0, nil
 		default:
 			t.Fatal(errUnknownVertex)
@@ -335,7 +339,7 @@ func TestBootstrapperTxDependencies(t *testing.T) {
 		},
 		BytesV: txBytes0,
 	}
-	tx0.InputIDsV.Add(utxos[0])
+	tx0.InputIDsV = append(tx0.InputIDsV, utxos[0])
 
 	// Depends on tx0
 	tx1 := &snowstorm.TestTx{
@@ -346,7 +350,7 @@ func TestBootstrapperTxDependencies(t *testing.T) {
 		DependenciesV: []snowstorm.Tx{tx0},
 		BytesV:        txBytes1,
 	}
-	tx1.InputIDsV.Add(utxos[1])
+	tx1.InputIDsV = append(tx1.InputIDsV, utxos[1])
 
 	vtxID0 := ids.GenerateTestID()
 	vtxID1 := ids.GenerateTestID()
@@ -396,8 +400,7 @@ func TestBootstrapperTxDependencies(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	acceptedIDs := ids.Set{}
-	acceptedIDs.Add(vtxID1)
+	acceptedIDs := []ids.ID{vtxID1}
 
 	manager.ParseVertexF = func(vtxBytes []byte) (avalanche.Vertex, error) {
 		switch {
@@ -410,10 +413,10 @@ func TestBootstrapperTxDependencies(t *testing.T) {
 		return nil, errParsedUnknownVertex
 	}
 	manager.GetVertexF = func(vtxID ids.ID) (avalanche.Vertex, error) {
-		switch {
-		case vtxID.Equals(vtxID1):
+		switch vtxID {
+		case vtxID1:
 			return vtx1, nil
-		case vtxID.Equals(vtxID0):
+		case vtxID0:
 			return nil, errUnknownVertex
 		default:
 			t.Fatal(errUnknownVertex)
@@ -426,8 +429,8 @@ func TestBootstrapperTxDependencies(t *testing.T) {
 		if !vdr.Equals(peerID) {
 			t.Fatalf("Should have requested vertex from %s, requested from %s", peerID, vdr)
 		}
-		switch {
-		case vtxID.Equals(vtxID0):
+		switch vtxID {
+		case vtxID0:
 		default:
 			t.Fatal(errUnknownVertex)
 		}
@@ -501,7 +504,7 @@ func TestBootstrapperMissingTxDependency(t *testing.T) {
 		DependenciesV: []snowstorm.Tx{tx0},
 		BytesV:        txBytes1,
 	}
-	tx1.InputIDsV.Add(utxos[1])
+	tx1.InputIDsV = append(tx1.InputIDsV, utxos[1])
 
 	vtxID0 := ids.GenerateTestID()
 	vtxID1 := ids.GenerateTestID()
@@ -540,14 +543,13 @@ func TestBootstrapperMissingTxDependency(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	acceptedIDs := ids.Set{}
-	acceptedIDs.Add(vtxID1)
+	acceptedIDs := []ids.ID{vtxID1}
 
 	manager.GetVertexF = func(vtxID ids.ID) (avalanche.Vertex, error) {
-		switch {
-		case vtxID.Equals(vtxID1):
+		switch vtxID {
+		case vtxID1:
 			return vtx1, nil
-		case vtxID.Equals(vtxID0):
+		case vtxID0:
 			return nil, errUnknownVertex
 		default:
 			t.Fatal(errUnknownVertex)
@@ -572,7 +574,7 @@ func TestBootstrapperMissingTxDependency(t *testing.T) {
 			t.Fatalf("Should have requested vertex from %s, requested from %s", peerID, vdr)
 		}
 		switch {
-		case vtxID.Equals(vtxID0):
+		case vtxID == vtxID0:
 		default:
 			t.Fatalf("Requested wrong vertex")
 		}
@@ -636,16 +638,18 @@ func TestBootstrapperAcceptedFrontier(t *testing.T) {
 	}
 
 	accepted := bs.CurrentAcceptedFrontier()
+	acceptedSet := ids.Set{}
+	acceptedSet.Add(accepted...)
 
 	manager.EdgeF = nil
 
-	if !accepted.Contains(vtxID0) {
+	if !acceptedSet.Contains(vtxID0) {
 		t.Fatalf("Vtx should be accepted")
 	}
-	if !accepted.Contains(vtxID1) {
+	if !acceptedSet.Contains(vtxID1) {
 		t.Fatalf("Vtx should be accepted")
 	}
-	if accepted.Contains(vtxID2) {
+	if acceptedSet.Contains(vtxID2) {
 		t.Fatalf("Vtx shouldn't be accepted")
 	}
 }
@@ -678,20 +682,15 @@ func TestBootstrapperFilterAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	vtxIDs := ids.Set{}
-	vtxIDs.Add(
-		vtxID0,
-		vtxID1,
-		vtxID2,
-	)
+	vtxIDs := []ids.ID{vtxID0, vtxID1, vtxID2}
 
 	manager.GetVertexF = func(vtxID ids.ID) (avalanche.Vertex, error) {
-		switch {
-		case vtxID.Equals(vtxID0):
+		switch vtxID {
+		case vtxID0:
 			return vtx0, nil
-		case vtxID.Equals(vtxID1):
+		case vtxID1:
 			return vtx1, nil
-		case vtxID.Equals(vtxID2):
+		case vtxID2:
 			return nil, errUnknownVertex
 		}
 		t.Fatal(errUnknownVertex)
@@ -699,16 +698,18 @@ func TestBootstrapperFilterAccepted(t *testing.T) {
 	}
 
 	accepted := bs.FilterAccepted(vtxIDs)
+	acceptedSet := ids.Set{}
+	acceptedSet.Add(accepted...)
 
 	manager.GetVertexF = nil
 
-	if !accepted.Contains(vtxID0) {
+	if !acceptedSet.Contains(vtxID0) {
 		t.Fatalf("Vtx should be accepted")
 	}
-	if !accepted.Contains(vtxID1) {
+	if !acceptedSet.Contains(vtxID1) {
 		t.Fatalf("Vtx should be accepted")
 	}
-	if accepted.Contains(vtxID2) {
+	if acceptedSet.Contains(vtxID2) {
 		t.Fatalf("Vtx shouldn't be accepted")
 	}
 }
@@ -764,16 +765,15 @@ func TestBootstrapperIncompleteMultiPut(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	acceptedIDs := ids.Set{}
-	acceptedIDs.Add(vtxID2)
+	acceptedIDs := []ids.ID{vtxID2}
 
 	manager.GetVertexF = func(vtxID ids.ID) (avalanche.Vertex, error) {
 		switch {
-		case vtxID.Equals(vtxID0):
+		case vtxID == vtxID0:
 			return nil, errUnknownVertex
-		case vtxID.Equals(vtxID1):
+		case vtxID == vtxID1:
 			return nil, errUnknownVertex
-		case vtxID.Equals(vtxID2):
+		case vtxID == vtxID2:
 			return vtx2, nil
 		default:
 			t.Fatal(errUnknownVertex)
@@ -801,8 +801,8 @@ func TestBootstrapperIncompleteMultiPut(t *testing.T) {
 		if !vdr.Equals(peerID) {
 			t.Fatalf("Should have requested vertex from %s, requested from %s", peerID, vdr)
 		}
-		switch {
-		case vtxID.Equals(vtxID1), vtxID.Equals(vtxID0):
+		switch vtxID {
+		case vtxID1, vtxID0:
 		default:
 			t.Fatal(errUnknownVertex)
 		}
@@ -814,29 +814,33 @@ func TestBootstrapperIncompleteMultiPut(t *testing.T) {
 
 	if err := bs.ForceAccepted(acceptedIDs); err != nil { // should request vtx1
 		t.Fatal(err)
-	} else if !requested.Equals(vtxID1) {
+	} else if requested != vtxID1 {
 		t.Fatal("requested wrong vtx")
 	}
 
-	if err := bs.MultiPut(peerID, *reqIDPtr, [][]byte{vtxBytes1}); err != nil { // Provide vtx1; should request vtx0
+	err = bs.MultiPut(peerID, *reqIDPtr, [][]byte{vtxBytes1})
+	switch {
+	case err != nil: // Provide vtx1; should request vtx0
 		t.Fatal(err)
-	} else if bs.Ctx.IsBootstrapped() {
+	case bs.Ctx.IsBootstrapped():
 		t.Fatalf("should not have finished")
-	} else if !requested.Equals(vtxID0) {
+	case requested != vtxID0:
 		t.Fatal("should hae requested vtx0")
 	}
 
 	vm.CantBootstrapped = false
 
-	if err := bs.MultiPut(peerID, *reqIDPtr, [][]byte{vtxBytes0}); err != nil { // Provide vtx0; can finish now
+	err = bs.MultiPut(peerID, *reqIDPtr, [][]byte{vtxBytes0})
+	switch {
+	case err != nil: // Provide vtx0; can finish now
 		t.Fatal(err)
-	} else if !bs.Ctx.IsBootstrapped() {
+	case !bs.Ctx.IsBootstrapped():
 		t.Fatal("should have finished")
-	} else if vtx0.Status() != choices.Accepted {
+	case vtx0.Status() != choices.Accepted:
 		t.Fatal("should be accepted")
-	} else if vtx1.Status() != choices.Accepted {
+	case vtx1.Status() != choices.Accepted:
 		t.Fatal("should be accepted")
-	} else if vtx2.Status() != choices.Accepted {
+	case vtx2.Status() != choices.Accepted:
 		t.Fatal("should be accepted")
 	}
 }
@@ -880,20 +884,18 @@ func TestBootstrapperFinalized(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	acceptedIDs := ids.Set{}
-	acceptedIDs.Add(vtxID0)
-	acceptedIDs.Add(vtxID1)
+	acceptedIDs := []ids.ID{vtxID0, vtxID1}
 
 	parsedVtx0 := false
 	parsedVtx1 := false
 	manager.GetVertexF = func(vtxID ids.ID) (avalanche.Vertex, error) {
-		switch {
-		case vtxID.Equals(vtxID0):
+		switch vtxID {
+		case vtxID0:
 			if parsedVtx0 {
 				return vtx0, nil
 			}
 			return nil, errUnknownVertex
-		case vtxID.Equals(vtxID1):
+		case vtxID1:
 			if parsedVtx1 {
 				return vtx1, nil
 			}
@@ -918,12 +920,12 @@ func TestBootstrapperFinalized(t *testing.T) {
 		return nil, errUnknownVertex
 	}
 
-	requestIDs := map[[32]byte]uint32{}
+	requestIDs := map[ids.ID]uint32{}
 	sender.GetAncestorsF = func(vdr ids.ShortID, reqID uint32, vtxID ids.ID) {
 		if !vdr.Equals(peerID) {
 			t.Fatalf("Should have requested block from %s, requested from %s", peerID, vdr)
 		}
-		requestIDs[vtxID.Key()] = reqID
+		requestIDs[vtxID] = reqID
 	}
 
 	vm.CantBootstrapping = false
@@ -932,7 +934,7 @@ func TestBootstrapperFinalized(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reqID, ok := requestIDs[vtxID1.Key()]
+	reqID, ok := requestIDs[vtxID1]
 	if !ok {
 		t.Fatalf("should have requested vtx1")
 	}
@@ -943,20 +945,20 @@ func TestBootstrapperFinalized(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reqID, ok = requestIDs[vtxID0.Key()]
+	reqID, ok = requestIDs[vtxID0]
 	if !ok {
 		t.Fatalf("should have requested vtx0")
 	}
 
-	if err := bs.GetAncestorsFailed(peerID, reqID); err != nil {
+	err = bs.GetAncestorsFailed(peerID, reqID)
+	switch {
+	case err != nil:
 		t.Fatal(err)
-	}
-
-	if !*finished {
+	case !*finished:
 		t.Fatalf("Bootstrapping should have finished")
-	} else if vtx0.Status() != choices.Accepted {
+	case vtx0.Status() != choices.Accepted:
 		t.Fatalf("Vertex should be accepted")
-	} else if vtx1.Status() != choices.Accepted {
+	case vtx1.Status() != choices.Accepted:
 		t.Fatalf("Vertex should be accepted")
 	}
 }
@@ -1012,25 +1014,24 @@ func TestBootstrapperAcceptsMultiPutParents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	acceptedIDs := ids.Set{}
-	acceptedIDs.Add(vtxID2)
+	acceptedIDs := []ids.ID{vtxID2}
 
 	parsedVtx0 := false
 	parsedVtx1 := false
 	parsedVtx2 := false
 	manager.GetVertexF = func(vtxID ids.ID) (avalanche.Vertex, error) {
-		switch {
-		case vtxID.Equals(vtxID0):
+		switch vtxID {
+		case vtxID0:
 			if parsedVtx0 {
 				return vtx0, nil
 			}
 			return nil, errUnknownVertex
-		case vtxID.Equals(vtxID1):
+		case vtxID1:
 			if parsedVtx1 {
 				return vtx1, nil
 			}
 			return nil, errUnknownVertex
-		case vtxID.Equals(vtxID2):
+		case vtxID2:
 			if parsedVtx2 {
 				return vtx2, nil
 			}
@@ -1059,12 +1060,12 @@ func TestBootstrapperAcceptsMultiPutParents(t *testing.T) {
 		return nil, errUnknownVertex
 	}
 
-	requestIDs := map[[32]byte]uint32{}
+	requestIDs := map[ids.ID]uint32{}
 	sender.GetAncestorsF = func(vdr ids.ShortID, reqID uint32, vtxID ids.ID) {
 		if !vdr.Equals(peerID) {
 			t.Fatalf("Should have requested block from %s, requested from %s", peerID, vdr)
 		}
-		requestIDs[vtxID.Key()] = reqID
+		requestIDs[vtxID] = reqID
 	}
 
 	vm.CantBootstrapping = false
@@ -1073,7 +1074,7 @@ func TestBootstrapperAcceptsMultiPutParents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reqID, ok := requestIDs[vtxID2.Key()]
+	reqID, ok := requestIDs[vtxID2]
 	if !ok {
 		t.Fatalf("should have requested vtx2")
 	}
@@ -1084,13 +1085,14 @@ func TestBootstrapperAcceptsMultiPutParents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !*finished {
+	switch {
+	case !*finished:
 		t.Fatalf("Bootstrapping should have finished")
-	} else if vtx0.Status() != choices.Accepted {
+	case vtx0.Status() != choices.Accepted:
 		t.Fatalf("Vertex should be accepted")
-	} else if vtx1.Status() != choices.Accepted {
+	case vtx1.Status() != choices.Accepted:
 		t.Fatalf("Vertex should be accepted")
-	} else if vtx2.Status() != choices.Accepted {
+	case vtx2.Status() != choices.Accepted:
 		t.Fatalf("Vertex should be accepted")
 	}
 }

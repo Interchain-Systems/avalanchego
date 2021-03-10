@@ -90,9 +90,8 @@ func (b *Bootstrapper) Initialize(
 }
 
 // CurrentAcceptedFrontier returns the last accepted block
-func (b *Bootstrapper) CurrentAcceptedFrontier() ids.Set {
-	acceptedFrontier := ids.Set{}
-	acceptedFrontier.Add(b.VM.LastAccepted())
+func (b *Bootstrapper) CurrentAcceptedFrontier() []ids.ID {
+	acceptedFrontier := []ids.ID{b.VM.LastAccepted()}
 	return acceptedFrontier
 }
 
@@ -108,7 +107,7 @@ func (b *Bootstrapper) FilterAccepted(containerIDs ids.Set) ids.Set {
 }
 
 // ForceAccepted ...
-func (b *Bootstrapper) ForceAccepted(acceptedContainerIDs ids.Set) error {
+func (b *Bootstrapper) ForceAccepted(acceptedContainerIDs []ids.ID) error {
 	if err := b.VM.Bootstrapping(); err != nil {
 		return fmt.Errorf("failed to notify VM that bootstrapping has started: %w",
 			err)

@@ -10,6 +10,7 @@ import (
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/networking/router"
 	"github.com/ava-labs/avalanchego/snow/networking/timeout"
+	"github.com/ava-labs/avalanchego/utils/constants"
 )
 
 // Sender sends consensus messages to other validators
@@ -34,16 +35,20 @@ func (s *Sender) Context() *snow.Context { return s.ctx }
 // GetAcceptedFrontier ...
 func (s *Sender) GetAcceptedFrontier(validatorIDs ids.ShortSet, requestID uint32) {
 	currentDeadline := time.Time{}
-	for _, validatorID := range validatorIDs.List() {
-		vID := validatorID
-		deadline := s.timeouts.Register(validatorID, s.ctx.ChainID, requestID, func() {
-			s.router.GetAcceptedFrontierFailed(vID, s.ctx.ChainID, requestID)
+	for validatorIDKey := range validatorIDs {
+		validatorID := ids.NewShortID(validatorIDKey)
+		deadline, ok := s.timeouts.Register(validatorID, s.ctx.ChainID, requestID, true, constants.GetAcceptedFrontierMsg, func() {
+			s.router.GetAcceptedFrontierFailed(validatorID, s.ctx.ChainID, requestID)
 		})
 		if deadline.After(currentDeadline) {
 			currentDeadline = deadline
 		}
+		if !ok {
+			validatorIDs.Remove(validatorID)
+		}
 	}
 
+	// Move this to the beginning
 	if validatorIDs.Contains(s.ctx.NodeID) {
 		validatorIDs.Remove(s.ctx.NodeID)
 		go s.router.GetAcceptedFrontier(s.ctx.NodeID, s.ctx.ChainID, requestID, currentDeadline)
@@ -53,7 +58,7 @@ func (s *Sender) GetAcceptedFrontier(validatorIDs ids.ShortSet, requestID uint32
 }
 
 // AcceptedFrontier ...
-func (s *Sender) AcceptedFrontier(validatorID ids.ShortID, requestID uint32, containerIDs ids.Set) {
+func (s *Sender) AcceptedFrontier(validatorID ids.ShortID, requestID uint32, containerIDs []ids.ID) {
 	if validatorID.Equals(s.ctx.NodeID) {
 		go s.router.AcceptedFrontier(validatorID, s.ctx.ChainID, requestID, containerIDs)
 	} else {
@@ -62,15 +67,18 @@ func (s *Sender) AcceptedFrontier(validatorID ids.ShortID, requestID uint32, con
 }
 
 // GetAccepted ...
-func (s *Sender) GetAccepted(validatorIDs ids.ShortSet, requestID uint32, containerIDs ids.Set) {
+func (s *Sender) GetAccepted(validatorIDs ids.ShortSet, requestID uint32, containerIDs []ids.ID) {
 	currentDeadline := time.Time{}
-	for _, validatorID := range validatorIDs.List() {
-		vID := validatorID
-		deadline := s.timeouts.Register(validatorID, s.ctx.ChainID, requestID, func() {
-			s.router.GetAcceptedFailed(vID, s.ctx.ChainID, requestID)
+	for validatorIDKey := range validatorIDs {
+		validatorID := ids.NewShortID(validatorIDKey)
+		deadline, ok := s.timeouts.Register(validatorID, s.ctx.ChainID, requestID, true, constants.GetAcceptedMsg, func() {
+			s.router.GetAcceptedFailed(validatorID, s.ctx.ChainID, requestID)
 		})
 		if deadline.After(currentDeadline) {
 			currentDeadline = deadline
+		}
+		if !ok {
+			validatorIDs.Remove(validatorID)
 		}
 	}
 
@@ -83,7 +91,7 @@ func (s *Sender) GetAccepted(validatorIDs ids.ShortSet, requestID uint32, contai
 }
 
 // Accepted ...
-func (s *Sender) Accepted(validatorID ids.ShortID, requestID uint32, containerIDs ids.Set) {
+func (s *Sender) Accepted(validatorID ids.ShortID, requestID uint32, containerIDs []ids.ID) {
 	if validatorID.Equals(s.ctx.NodeID) {
 		go s.router.Accepted(validatorID, s.ctx.ChainID, requestID, containerIDs)
 	} else {
@@ -100,9 +108,12 @@ func (s *Sender) GetAncestors(validatorID ids.ShortID, requestID uint32, contain
 		return
 	}
 
-	deadline := s.timeouts.Register(validatorID, s.ctx.ChainID, requestID, func() {
+	deadline, ok := s.timeouts.Register(validatorID, s.ctx.ChainID, requestID, false, constants.GetAncestorsMsg, func() {
 		s.router.GetAncestorsFailed(validatorID, s.ctx.ChainID, requestID)
 	})
+	if !ok {
+		return
+	}
 	s.sender.GetAncestors(validatorID, s.ctx.ChainID, requestID, deadline, containerID)
 }
 
@@ -129,9 +140,12 @@ func (s *Sender) Get(validatorID ids.ShortID, requestID uint32, containerID ids.
 
 	// Add a timeout -- if we don't get a response before the timeout expires,
 	// send this consensus engine a GetFailed message
-	deadline := s.timeouts.Register(validatorID, s.ctx.ChainID, requestID, func() {
+	deadline, ok := s.timeouts.Register(validatorID, s.ctx.ChainID, requestID, true, constants.GetMsg, func() {
 		s.router.GetFailed(validatorID, s.ctx.ChainID, requestID)
 	})
+	if !ok {
+		return
+	}
 	s.sender.Get(validatorID, s.ctx.ChainID, requestID, deadline, containerID)
 }
 
@@ -152,13 +166,16 @@ func (s *Sender) PushQuery(validatorIDs ids.ShortSet, requestID uint32, containe
 	s.ctx.Log.Verbo("Sending PushQuery to validators %v. RequestID: %d. ContainerID: %s", validatorIDs, requestID, containerID)
 
 	currentDeadline := time.Time{}
-	for _, validatorID := range validatorIDs.List() {
-		vID := validatorID
-		deadline := s.timeouts.Register(validatorID, s.ctx.ChainID, requestID, func() {
-			s.router.QueryFailed(vID, s.ctx.ChainID, requestID)
+	for validatorIDKey := range validatorIDs {
+		validatorID := ids.NewShortID(validatorIDKey)
+		deadline, ok := s.timeouts.Register(validatorID, s.ctx.ChainID, requestID, true, constants.PushQueryMsg, func() {
+			s.router.QueryFailed(validatorID, s.ctx.ChainID, requestID)
 		})
 		if deadline.After(currentDeadline) {
 			currentDeadline = deadline
+		}
+		if !ok {
+			validatorIDs.Remove(validatorID)
 		}
 	}
 
@@ -183,13 +200,16 @@ func (s *Sender) PullQuery(validatorIDs ids.ShortSet, requestID uint32, containe
 	s.ctx.Log.Verbo("Sending PullQuery. RequestID: %d. ContainerID: %s", requestID, containerID)
 
 	currentDeadline := time.Time{}
-	for _, validatorID := range validatorIDs.List() {
-		vID := validatorID
-		deadline := s.timeouts.Register(validatorID, s.ctx.ChainID, requestID, func() {
-			s.router.QueryFailed(vID, s.ctx.ChainID, requestID)
+	for validatorIDKey := range validatorIDs {
+		validatorID := ids.NewShortID(validatorIDKey)
+		deadline, ok := s.timeouts.Register(validatorID, s.ctx.ChainID, requestID, true, constants.PullQueryMsg, func() {
+			s.router.QueryFailed(validatorID, s.ctx.ChainID, requestID)
 		})
 		if deadline.After(currentDeadline) {
 			currentDeadline = deadline
+		}
+		if !ok {
+			validatorIDs.Remove(validatorID)
 		}
 	}
 
@@ -207,7 +227,7 @@ func (s *Sender) PullQuery(validatorIDs ids.ShortSet, requestID uint32, containe
 }
 
 // Chits sends chits
-func (s *Sender) Chits(validatorID ids.ShortID, requestID uint32, votes ids.Set) {
+func (s *Sender) Chits(validatorID ids.ShortID, requestID uint32, votes []ids.ID) {
 	s.ctx.Log.Verbo("Sending Chits to validator %s. RequestID: %d. Votes: %s", validatorID, requestID, votes)
 	// If [validatorID] is myself, send this message directly
 	// to my own router rather than sending it over the network

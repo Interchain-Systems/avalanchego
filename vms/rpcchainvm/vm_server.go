@@ -169,8 +169,9 @@ func (vm *VMServer) Initialize(_ context.Context, req *vmproto.InitializeRequest
 	vm.conns = append(vm.conns, dbConn)
 	vm.conns = append(vm.conns, msgConn)
 	vm.toEngine = toEngine
+	lastAccepted := vm.vm.LastAccepted()
 	return &vmproto.InitializeResponse{
-		LastAcceptedID: vm.vm.LastAccepted().Bytes(),
+		LastAcceptedID: lastAccepted[:],
 	}, nil
 }
 
@@ -233,6 +234,8 @@ func (vm *VMServer) BuildBlock(_ context.Context, _ *vmproto.BuildBlockRequest) 
 	if err != nil {
 		return nil, err
 	}
+	blkID := blk.ID()
+	parentID := blk.Parent().ID()
 	return &vmproto.BuildBlockResponse{
 		Id:       blk.ID().Bytes(),
 		ParentID: blk.Parent().Bytes(),
@@ -246,6 +249,8 @@ func (vm *VMServer) ParseBlock(_ context.Context, req *vmproto.ParseBlockRequest
 	if err != nil {
 		return nil, err
 	}
+	blkID := blk.ID()
+	parentID := blk.Parent().ID()
 	return &vmproto.ParseBlockResponse{
 		Id:       blk.ID().Bytes(),
 		ParentID: blk.Parent().Bytes(),
@@ -273,6 +278,7 @@ func (vm *VMServer) GetBlock(_ context.Context, req *vmproto.GetBlockRequest) (*
 	if err != nil {
 		return nil, err
 	}
+	parentID := blk.Parent().ID()
 	return &vmproto.GetBlockResponse{
 		ParentID: blk.Parent().Bytes(),
 		Bytes:    blk.Bytes(),
@@ -288,6 +294,34 @@ func (vm *VMServer) SetPreference(_ context.Context, req *vmproto.SetPreferenceR
 	}
 	vm.vm.SetPreference(id)
 	return &vmproto.SetPreferenceResponse{}, nil
+}
+
+// Health ...
+func (vm *VMServer) Health(_ context.Context, req *vmproto.HealthRequest) (*vmproto.HealthResponse, error) {
+	details, err := vm.vm.Health()
+	if err != nil {
+		return &vmproto.HealthResponse{}, err
+	}
+
+	// Try to stringify the details
+	detailsStr := "couldn't parse health check details to string"
+	switch details := details.(type) {
+	case nil:
+		detailsStr = ""
+	case string:
+		detailsStr = details
+	case map[string]string:
+		asJSON, err := json.Marshal(details)
+		if err != nil {
+			detailsStr = string(asJSON)
+		}
+	case []byte:
+		detailsStr = string(details)
+	}
+
+	return &vmproto.HealthResponse{
+		Details: detailsStr,
+	}, nil
 }
 
 // BlockVerify ...

@@ -20,7 +20,7 @@ func (e *evictable) Evict()     { e.evicted++ }
 func TestEvictableLRU(t *testing.T) {
 	cache := EvictableLRU{}
 
-	expectedValue1 := &evictable{id: ids.NewID([32]byte{1})}
+	expectedValue1 := &evictable{id: ids.ID{1}}
 	if returnedValue := cache.Deduplicate(expectedValue1).(*evictable); returnedValue != expectedValue1 {
 		t.Fatalf("Returned unknown value")
 	} else if expectedValue1.evicted != 0 {
@@ -31,32 +31,37 @@ func TestEvictableLRU(t *testing.T) {
 		t.Fatalf("Value was evicted unexpectedly")
 	}
 
-	expectedValue2 := &evictable{id: ids.NewID([32]byte{2})}
-	if returnedValue := cache.Deduplicate(expectedValue2).(*evictable); returnedValue != expectedValue2 {
+	expectedValue2 := &evictable{id: ids.ID{2}}
+	returnedValue := cache.Deduplicate(expectedValue2).(*evictable)
+	switch {
+	case returnedValue != expectedValue2:
 		t.Fatalf("Returned unknown value")
-	} else if expectedValue1.evicted != 1 {
+	case expectedValue1.evicted != 1:
 		t.Fatalf("Value should have been evicted")
-	} else if expectedValue2.evicted != 0 {
+	case expectedValue2.evicted != 0:
 		t.Fatalf("Value was evicted unexpectedly")
 	}
 
 	cache.Size = 2
 
-	expectedValue3 := &evictable{id: ids.NewID([32]byte{2})}
-	if returnedValue := cache.Deduplicate(expectedValue3).(*evictable); returnedValue != expectedValue2 {
+	expectedValue3 := &evictable{id: ids.ID{2}}
+	returnedValue = cache.Deduplicate(expectedValue3).(*evictable)
+	switch {
+	case returnedValue != expectedValue2:
 		t.Fatalf("Returned unknown value")
-	} else if expectedValue1.evicted != 1 {
+	case expectedValue1.evicted != 1:
 		t.Fatalf("Value should have been evicted")
-	} else if expectedValue2.evicted != 0 {
+	case expectedValue2.evicted != 0:
 		t.Fatalf("Value was evicted unexpectedly")
 	}
 
 	cache.Flush()
-	if expectedValue1.evicted != 1 {
+	switch {
+	case expectedValue1.evicted != 1:
 		t.Fatalf("Value should have been evicted")
-	} else if expectedValue2.evicted != 1 {
+	case expectedValue2.evicted != 1:
 		t.Fatalf("Value should have been evicted")
-	} else if expectedValue3.evicted != 0 {
+	case expectedValue3.evicted != 0:
 		t.Fatalf("Value was evicted unexpectedly")
 	}
 }

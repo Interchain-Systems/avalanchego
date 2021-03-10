@@ -50,7 +50,7 @@ func (tx *UnsignedImportTx) InputUTXOs() ids.Set {
 func (tx *UnsignedImportTx) Verify(
 	avmID ids.ID,
 	ctx *snow.Context,
-	c codec.Codec,
+	c codec.Manager,
 	feeAmount uint64,
 	feeAssetID ids.ID,
 ) error {
@@ -59,9 +59,7 @@ func (tx *UnsignedImportTx) Verify(
 		return errNilTx
 	case tx.syntacticallyVerified: // already passed syntactic verification
 		return nil
-	case tx.SourceChain.IsZero():
-		return errWrongChainID
-	case !tx.SourceChain.Equals(avmID):
+	case tx.SourceChain != avmID:
 		// TODO: remove this check if we allow for P->C swaps
 		return errWrongChainID
 	case len(tx.ImportedInputs) == 0:
@@ -74,7 +72,7 @@ func (tx *UnsignedImportTx) Verify(
 
 	for _, in := range tx.ImportedInputs {
 		if err := in.Verify(); err != nil {
-			return err
+			return fmt.Errorf("input failed verification: %w", err)
 		}
 	}
 	if !avax.IsSortedAndUniqueTransferableInputs(tx.ImportedInputs) {
@@ -100,7 +98,9 @@ func (tx *UnsignedImportTx) SemanticVerify(
 		utxoID := input.UTXOID.InputID()
 		utxo, err := vm.getUTXO(db, utxoID)
 		if err != nil {
-			return tempError{err}
+			return tempError{
+				fmt.Errorf("failed to get UTXO %s: %w", utxoID, err),
+			}
 		}
 		utxos[index] = utxo
 	}
@@ -109,11 +109,15 @@ func (tx *UnsignedImportTx) SemanticVerify(
 
 	// Consume the UTXOS
 	if err := vm.consumeInputs(db, tx.Ins); err != nil {
-		return tempError{err}
+		return tempError{
+			fmt.Errorf("failed to consume inputs: %w", err),
+		}
 	}
 	// Produce the UTXOS
 	if err := vm.produceOutputs(db, txID, tx.Outs); err != nil {
-		return tempError{err}
+		return tempError{
+			fmt.Errorf("failed to produce outputs: %w", err),
+		}
 	}
 
 	if !vm.bootstrapped {
@@ -122,17 +126,22 @@ func (tx *UnsignedImportTx) SemanticVerify(
 
 	utxoIDs := make([][]byte, len(tx.ImportedInputs))
 	for i, in := range tx.ImportedInputs {
-		utxoIDs[i] = in.UTXOID.InputID().Bytes()
+		utxoID := in.UTXOID.InputID()
+		utxoIDs[i] = utxoID[:]
 	}
 	allUTXOBytes, err := vm.Ctx.SharedMemory.Get(tx.SourceChain, utxoIDs)
 	if err != nil {
-		return tempError{err}
+		return tempError{
+			fmt.Errorf("failed to get shared memory: %w", err),
+		}
 	}
 
 	for i, utxoBytes := range allUTXOBytes {
 		utxo := &avax.UTXO{}
-		if err := vm.codec.Unmarshal(utxoBytes, utxo); err != nil {
-			return tempError{err}
+		if _, err := vm.codec.Unmarshal(utxoBytes, utxo); err != nil {
+			return tempError{
+				fmt.Errorf("failed to get unmarshal UTXO: %w", err),
+			}
 		}
 		utxos[i+len(tx.Ins)] = utxo
 	}
@@ -152,7 +161,8 @@ func (tx *UnsignedImportTx) SemanticVerify(
 func (tx *UnsignedImportTx) Accept(ctx *snow.Context, batch database.Batch) error {
 	utxoIDs := make([][]byte, len(tx.ImportedInputs))
 	for i, in := range tx.ImportedInputs {
-		utxoIDs[i] = in.InputID().Bytes()
+		utxoID := in.InputID()
+		utxoIDs[i] = utxoID[:]
 	}
 	return ctx.SharedMemory.Remove(tx.SourceChain, utxoIDs, batch)
 }
@@ -164,7 +174,7 @@ func (vm *VM) newImportTx(
 	keys []*crypto.PrivateKeySECP256K1R, // Keys to import the funds
 	changeAddr ids.ShortID, // Address to send change to, if there is any
 ) (*Tx, error) {
-	if !vm.Ctx.XChainID.Equals(chainID) {
+	if vm.Ctx.XChainID != chainID {
 		return nil, errWrongChainID
 	}
 
@@ -184,7 +194,7 @@ func (vm *VM) newImportTx(
 	importedAmount := uint64(0)
 	now := vm.clock.Unix()
 	for _, utxo := range atomicUTXOs {
-		if !utxo.AssetID().Equals(vm.Ctx.AVAXAssetID) {
+		if utxo.AssetID() != vm.Ctx.AVAXAssetID {
 			continue
 		}
 		inputIntf, utxoSigners, err := kc.Spend(utxo.Out, now)

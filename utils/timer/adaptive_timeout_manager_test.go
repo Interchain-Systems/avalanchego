@@ -8,23 +8,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/constants"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func TestAdaptiveTimeoutManager(t *testing.T) {
 	tm := AdaptiveTimeoutManager{}
-	tm.Initialize(&AdaptiveTimeoutConfig{
-		InitialTimeout:    time.Millisecond,
-		MinimumTimeout:    time.Millisecond,
-		MaximumTimeout:    time.Hour,
-		TimeoutMultiplier: 2,
-		TimeoutReduction:  time.Microsecond,
-		Namespace:         constants.PlatformName,
-		Registerer:        prometheus.NewRegistry(),
+	err := tm.Initialize(&AdaptiveTimeoutConfig{
+		InitialTimeout: time.Millisecond,
+		MinimumTimeout: time.Millisecond,
+		MaximumTimeout: time.Hour,
+		TimeoutInc:     2 * time.Millisecond,
+		TimeoutDec:     time.Microsecond,
+		Namespace:      constants.PlatformName,
+		Registerer:     prometheus.NewRegistry(),
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	go tm.Dispatch()
 
 	var lock sync.Mutex
@@ -41,14 +43,14 @@ func TestAdaptiveTimeoutManager(t *testing.T) {
 
 		numSuccessful--
 		if numSuccessful > 0 {
-			tm.Put(ids.NewID([32]byte{byte(numSuccessful)}), *callback)
+			tm.Put(ids.ID{byte(numSuccessful)}, *callback)
 		}
 		if numSuccessful >= 0 {
 			wg.Done()
 		}
 		if numSuccessful%2 == 0 {
-			tm.Remove(ids.NewID([32]byte{byte(numSuccessful)}))
-			tm.Put(ids.NewID([32]byte{byte(numSuccessful)}), *callback)
+			tm.Remove(ids.ID{byte(numSuccessful)})
+			tm.Put(ids.ID{byte(numSuccessful)}, *callback)
 		}
 	}
 	(*callback)()

@@ -20,7 +20,9 @@ func TestAddDelegatorTxSyntacticVerify(t *testing.T) {
 	vm, _ := defaultVM(t)
 	vm.Ctx.Lock.Lock()
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.Ctx.Lock.Unlock()
 	}()
 
@@ -194,7 +196,9 @@ func TestAddDelegatorTxSemanticVerify(t *testing.T) {
 	vm, _ := defaultVM(t)
 	vm.Ctx.Lock.Lock()
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.Ctx.Lock.Unlock()
 	}()
 	nodeID := keys[0].PublicKey().Address()
@@ -347,7 +351,7 @@ func TestAddDelegatorTxSemanticVerify(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				for _, utxoID := range utxoIDs.List() {
+				for _, utxoID := range utxoIDs {
 					if err := vm.removeUTXO(db, utxoID); err != nil {
 						t.Fatal(err)
 					}

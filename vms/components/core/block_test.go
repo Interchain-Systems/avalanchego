@@ -11,7 +11,7 @@ import (
 )
 
 func TestBlock(t *testing.T) {
-	parentID := ids.NewID([32]byte{1, 2, 3, 4, 5})
+	parentID := ids.ID{1, 2, 3, 4, 5}
 	db := versiondb.New(memdb.New())
 	state, err := NewSnowmanState(func([]byte) (snowman.Block, error) { return nil, nil })
 	if err != nil {
@@ -38,12 +38,16 @@ func TestBlock(t *testing.T) {
 		t.Fatalf("status should be processing but is %s", status)
 	}
 
-	b.Accept()
+	if err := b.Accept(); err != nil {
+		t.Fatal(err)
+	}
 	if status := b.Status(); status != choices.Accepted {
 		t.Fatalf("status should be accepted but is %s", status)
 	}
 
-	b.Reject()
+	if err := b.Reject(); err != nil {
+		t.Fatal(err)
+	}
 	if status := b.Status(); status != choices.Rejected {
 		t.Fatalf("status should be rejected but is %s", status)
 	}

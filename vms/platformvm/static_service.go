@@ -6,6 +6,7 @@ package platformvm
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 
@@ -34,20 +35,27 @@ var (
 // StaticService defines the static API methods exposed by the platform VM
 type StaticService struct{}
 
+// CreateStaticService ...
+func CreateStaticService() *StaticService {
+	return &StaticService{}
+}
+
 // APIUTXO is a UTXO on the Platform Chain that exists at the chain's genesis.
 type APIUTXO struct {
-	Locktime json.Uint64     `json:"locktime"`
-	Amount   json.Uint64     `json:"amount"`
-	Address  string          `json:"address"`
-	Message  formatting.CB58 `json:"message"`
+	Locktime json.Uint64 `json:"locktime"`
+	Amount   json.Uint64 `json:"amount"`
+	Address  string      `json:"address"`
+	Message  string      `json:"message"`
 }
 
 // APIStaker is the representation of a staker sent via APIs.
+// [TxID] is the txID of the transaction that added this staker.
 // [Amount] is the amount of tokens being staked.
 // [StartTime] is the Unix time when they start staking
 // [Endtime] is the Unix time repr. of when they are done staking
 // [NodeID] is the node ID of the staker
 type APIStaker struct {
+	TxID        ids.ID       `json:"txID"`
 	StartTime   json.Uint64  `json:"startTime"`
 	EndTime     json.Uint64  `json:"endTime"`
 	Weight      *json.Uint64 `json:"weight,omitempty"`
@@ -103,11 +111,11 @@ func (v *APIStaker) weight() uint64 {
 // [Name] is a human-readable, non-unique name for the chain.
 // [SubnetID] is the ID of the subnet that validates the chain
 type APIChain struct {
-	GenesisData formatting.CB58 `json:"genesisData"`
-	VMID        ids.ID          `json:"vmID"`
-	FxIDs       []ids.ID        `json:"fxIDs"`
-	Name        string          `json:"name"`
-	SubnetID    ids.ID          `json:"subnetID"`
+	GenesisData string   `json:"genesisData"`
+	VMID        ids.ID   `json:"vmID"`
+	FxIDs       []ids.ID `json:"fxIDs"`
+	Name        string   `json:"name"`
+	SubnetID    ids.ID   `json:"subnetID"`
 }
 
 // BuildGenesisArgs are the arguments used to create
@@ -126,11 +134,13 @@ type BuildGenesisArgs struct {
 	Time          json.Uint64           `json:"time"`
 	InitialSupply json.Uint64           `json:"initialSupply"`
 	Message       string                `json:"message"`
+	Encoding      formatting.Encoding   `json:"encoding"`
 }
 
 // BuildGenesisReply is the reply from BuildGenesis
 type BuildGenesisReply struct {
-	Bytes formatting.CB58 `json:"bytes"`
+	Bytes    string              `json:"bytes"`
+	Encoding formatting.Encoding `json:"encoding"`
 }
 
 // GenesisUTXO adds messages to UTXOs
@@ -207,9 +217,13 @@ func (ss *StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, r
 				TransferableOut: utxo.Out.(avax.TransferableOut),
 			}
 		}
+		messageBytes, err := formatting.Decode(args.Encoding, apiUTXO.Message)
+		if err != nil {
+			return fmt.Errorf("problem decoding UTXO message bytes: %w", err)
+		}
 		utxos = append(utxos, &GenesisUTXO{
 			UTXO:    utxo,
-			Message: apiUTXO.Message.Bytes,
+			Message: messageBytes,
 		})
 	}
 
@@ -250,8 +264,11 @@ func (ss *StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, r
 				return errStakeOverflow
 			}
 			weight = newWeight
-
-			memo = append(memo, apiUTXO.Message.Bytes...)
+			messageBytes, err := formatting.Decode(args.Encoding, apiUTXO.Message)
+			if err != nil {
+				return fmt.Errorf("problem decoding validator UTXO message bytes: %w", err)
+			}
+			memo = append(memo, messageBytes...)
 		}
 
 		if weight == 0 {
@@ -308,6 +325,10 @@ func (ss *StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, r
 	// Specify the chains that exist at genesis.
 	chains := []*Tx{}
 	for _, chain := range args.Chains {
+		genesisBytes, err := formatting.Decode(args.Encoding, chain.GenesisData)
+		if err != nil {
+			return fmt.Errorf("problem decoding chain genesis data: %w", err)
+		}
 		tx := &Tx{UnsignedTx: &UnsignedCreateChainTx{
 			BaseTx: BaseTx{BaseTx: avax.BaseTx{
 				NetworkID:    uint32(args.NetworkID),
@@ -317,7 +338,7 @@ func (ss *StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, r
 			ChainName:   chain.Name,
 			VMID:        chain.VMID,
 			FxIDs:       chain.FxIDs,
-			GenesisData: chain.GenesisData.Bytes,
+			GenesisData: genesisBytes,
 			SubnetAuth:  &secp256k1fx.Input{},
 		}}
 		if err := tx.Sign(GenesisCodec, nil); err != nil {
@@ -338,9 +359,16 @@ func (ss *StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, r
 	}
 
 	// Marshal genesis to bytes
-	bytes, err := GenesisCodec.Marshal(genesis)
-	reply.Bytes.Bytes = bytes
-	return err
+	bytes, err := GenesisCodec.Marshal(codecVersion, genesis)
+	if err != nil {
+		return fmt.Errorf("couldn't marshal genesis: %w", err)
+	}
+	reply.Bytes, err = formatting.Encode(args.Encoding, bytes)
+	if err != nil {
+		return fmt.Errorf("couldn't encode genesis as string: %w", err)
+	}
+	reply.Encoding = args.Encoding
+	return nil
 }
 
 type innerSortAPIUTXO []APIUTXO

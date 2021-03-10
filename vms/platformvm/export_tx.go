@@ -46,7 +46,7 @@ func (tx *UnsignedExportTx) InputUTXOs() ids.Set { return ids.Set{} }
 func (tx *UnsignedExportTx) Verify(
 	avmID ids.ID,
 	ctx *snow.Context,
-	c codec.Codec,
+	c codec.Manager,
 	feeAmount uint64,
 	feeAssetID ids.ID,
 ) error {
@@ -55,9 +55,7 @@ func (tx *UnsignedExportTx) Verify(
 		return errNilTx
 	case tx.syntacticallyVerified: // already passed syntactic verification
 		return nil
-	case tx.DestinationChain.IsZero():
-		return errWrongChainID
-	case !tx.DestinationChain.Equals(avmID):
+	case tx.DestinationChain != avmID:
 		// TODO: remove this check if we allow for P->C swaps
 		return errWrongChainID
 	case len(tx.ExportedOutputs) == 0:
@@ -70,7 +68,7 @@ func (tx *UnsignedExportTx) Verify(
 
 	for _, out := range tx.ExportedOutputs {
 		if err := out.Verify(); err != nil {
-			return err
+			return fmt.Errorf("output failed verification: %w", err)
 		}
 		if _, ok := out.Output().(*StakeableLockOut); ok {
 			return errWrongLocktime
@@ -100,18 +98,31 @@ func (tx *UnsignedExportTx) SemanticVerify(
 
 	// Verify the flowcheck
 	if err := vm.semanticVerifySpend(db, tx, tx.Ins, outs, stx.Creds, vm.txFee, vm.Ctx.AVAXAssetID); err != nil {
-		return err
+		switch err.(type) {
+		case permError:
+			return permError{
+				fmt.Errorf("failed semanticVerifySpend: %w", err),
+			}
+		default:
+			return tempError{
+				fmt.Errorf("failed semanticVerifySpend: %w", err),
+			}
+		}
 	}
 
 	txID := tx.ID()
 
 	// Consume the UTXOS
 	if err := vm.consumeInputs(db, tx.Ins); err != nil {
-		return tempError{err}
+		return tempError{
+			fmt.Errorf("failed to consume inputs: %w", err),
+		}
 	}
 	// Produce the UTXOS
 	if err := vm.produceOutputs(db, txID, tx.Outs); err != nil {
-		return tempError{err}
+		return tempError{
+			fmt.Errorf("failed to produce outputs: %w", err),
+		}
 	}
 	return nil
 }
@@ -131,13 +142,13 @@ func (tx *UnsignedExportTx) Accept(ctx *snow.Context, batch database.Batch) erro
 			Out:   out.Out,
 		}
 
-		utxoBytes, err := Codec.Marshal(utxo)
+		utxoBytes, err := Codec.Marshal(codecVersion, utxo)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to marshal UTXO: %w", err)
 		}
-
+		utxoID := utxo.InputID()
 		elem := &atomic.Element{
-			Key:   utxo.InputID().Bytes(),
+			Key:   utxoID[:],
 			Value: utxoBytes,
 		}
 		if out, ok := utxo.Out.(avax.Addressable); ok {
@@ -158,7 +169,7 @@ func (vm *VM) newExportTx(
 	keys []*crypto.PrivateKeySECP256K1R, // Pay the fee and provide the tokens
 	changeAddr ids.ShortID, // Address to send change to, if there is any
 ) (*Tx, error) {
-	if !vm.Ctx.XChainID.Equals(chainID) {
+	if vm.Ctx.XChainID != chainID {
 		return nil, errWrongChainID
 	}
 

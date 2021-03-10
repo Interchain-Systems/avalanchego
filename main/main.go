@@ -8,8 +8,10 @@ import (
 
 	"github.com/ava-labs/avalanchego/nat"
 	"github.com/ava-labs/avalanchego/node"
+	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/constants"
 	"github.com/ava-labs/avalanchego/utils/crypto"
+	"github.com/ava-labs/avalanchego/utils/dynamicip"
 	"github.com/ava-labs/avalanchego/utils/logging"
 )
 
@@ -30,27 +32,35 @@ var (
 
 // main is the primary entry point to Avalanche.
 func main() {
-	// Err is set based on the CLI arguments
-	if Err != nil {
-		fmt.Printf("parsing parameters returned with error %s\n", Err)
+	// parse config using viper
+	if err := parseViper(); err != nil {
+		fmt.Printf("parsing parameters returned with error %s\n", err)
 		return
 	}
 
-	factory := logging.NewFactory(Config.LoggingConfig)
-	defer factory.Close()
+	logFactory := logging.NewFactory(Config.LoggingConfig)
+	defer logFactory.Close()
 
-	log, err := factory.Make()
+	log, err := logFactory.Make()
 	if err != nil {
 		fmt.Printf("starting logger failed with: %s\n", err)
 		return
 	}
 	fmt.Println(header)
 
-	defer func() { recover() }()
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovered panic from", r)
+		}
+	}()
 
-	defer log.Stop()
-	defer log.StopOnPanic()
-	defer Config.DB.Close()
+	defer func() {
+		if err := Config.DB.Close(); err != nil {
+			log.Warn("failed to close the node's DB: %s", err)
+		}
+		log.StopOnPanic()
+		log.Stop()
+	}()
 
 	// Track if sybil control is enforced
 	if !Config.EnableStaking && Config.EnableP2PTLS {
@@ -67,7 +77,7 @@ func main() {
 	crypto.EnableCrypto = Config.EnableCrypto
 
 	if err := Config.ConsensusParams.Valid(); err != nil {
-		log.Fatal("consensus parameters are invalid: %s", err)
+		log.Error("consensus parameters are invalid: %s", err)
 		return
 	}
 
@@ -76,41 +86,99 @@ func main() {
 		log.Debug("assertions are enabled. This may slow down execution")
 	}
 
+	// SupportsNAT() for NoRouter is false.
+	// Which means we tried to perform a NAT activity but we were not successful.
+	if Config.AttemptedNATTraversal && !Config.Nat.SupportsNAT() {
+		log.Error("UPnP or NAT-PMP router attach failed, you may not be listening publicly," +
+			" please confirm the settings in your router")
+	}
+
 	mapper := nat.NewPortMapper(log, Config.Nat)
 	defer mapper.UnmapAllPorts()
 
-	// Open staking port
-	port, err := mapper.Map("TCP", Config.StakingLocalPort, stakingPortName)
-	if !Config.StakingIP.IsPrivate() {
-		if err == nil {
-			// The port was mapped and the ip is on a public network, the node
-			// should be able to be connected to peers on this public network.
-			Config.StakingIP.Port = port
-		} else {
-			// The port mapping errored, however it is possible the node is
-			// connected directly to a public network.
-			log.Warn("NAT traversal has failed. Unless the node is connected directly to a public network, the node will be able to connect to less nodes.")
-		}
-	} else {
-		// The reported IP is private, so this node will not be discoverable.
-		log.Warn("NAT traversal has failed. The node will be able to connect to less nodes.")
-	}
+	// Open staking port we want for NAT Traversal to have the external port
+	// (Config.StakingIP.Port) to connect to our internal listening port
+	// (Config.InternalStakingPort) which should be the same in most cases.
+	mapper.Map(
+		"TCP",
+		Config.StakingIP.IP().Port,
+		Config.StakingIP.IP().Port,
+		stakingPortName,
+		&Config.StakingIP,
+		Config.DynamicUpdateDuration,
+	)
 
 	// Open the HTTP port iff the HTTP server is not listening on localhost
 	if Config.HTTPHost != "127.0.0.1" && Config.HTTPHost != "localhost" {
-		_, _ = mapper.Map("TCP", Config.HTTPPort, httpPortName)
+		// For NAT Traversal we want to route from the external port
+		// (Config.ExternalHTTPPort) to our internal port (Config.HTTPPort)
+		mapper.Map(
+			"TCP",
+			Config.HTTPPort,
+			Config.HTTPPort,
+			httpPortName,
+			nil,
+			Config.DynamicUpdateDuration,
+		)
 	}
 
-	log.Debug("initializing node state")
+	// Regularly updates our public IP (or does nothing, if configured that way)
+	externalIPUpdater := dynamicip.NewDynamicIPManager(
+		Config.DynamicPublicIPResolver,
+		Config.DynamicUpdateDuration,
+		log,
+		&Config.StakingIP,
+	)
+	defer externalIPUpdater.Stop()
+
+	log.Info("this node's IP is set to: %s", Config.StakingIP.IP())
+
+	for {
+		shouldRestart, err := run(log, logFactory)
+		if err != nil {
+			break
+		}
+		// If the node says it should restart, do that. Otherwise, end the program.
+		if !shouldRestart {
+			break
+		}
+		log.Info("restarting node")
+	}
+}
+
+// Initialize and run the node.
+// Returns true if the node should restart after this function returns.
+func run(log logging.Logger, logFactory logging.Factory) (bool, error) {
+	log.Info("initializing node")
 	node := node.Node{}
-	if err := node.Initialize(&Config, log, factory); err != nil {
-		log.Fatal("error initializing node state: %s", err)
-		return
+	restarter := &restarter{
+		node:          &node,
+		shouldRestart: &utils.AtomicBool{},
 	}
-
-	defer node.Shutdown()
+	if err := node.Initialize(&Config, log, logFactory, restarter); err != nil {
+		log.Error("error initializing node: %s", err)
+		return restarter.shouldRestart.GetValue(), err
+	}
 
 	log.Debug("dispatching node handlers")
-	err = node.Dispatch()
-	log.Debug("node dispatching returned with %s", err)
+	err := node.Dispatch()
+	if err != nil {
+		log.Debug("node dispatch returned: %s", err)
+	}
+	return restarter.shouldRestart.GetValue(), nil
+}
+
+// restarter implements utils.Restarter
+type restarter struct {
+	node *node.Node
+	// If true, node should restart after shutting down
+	shouldRestart *utils.AtomicBool
+}
+
+// Restarter shuts down the node and marks that it should restart
+// It is safe to call Restart multiple times
+func (r *restarter) Restart() {
+	r.shouldRestart.SetValue(true)
+	// Shutdown is safe to call multiple times because it uses sync.Once
+	r.node.Shutdown()
 }

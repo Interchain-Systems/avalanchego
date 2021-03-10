@@ -72,11 +72,13 @@ func InitializeTest(t *testing.T, factory Factory) {
 		ConcurrentRepolls: 1,
 	}
 
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	if p := sm.Parameters(); p != params {
 		t.Fatalf("Wrong returned parameters")
-	} else if pref := sm.Preference(); !pref.Equals(GenesisID) {
+	} else if pref := sm.Preference(); pref != GenesisID {
 		t.Fatalf("Wrong preference returned")
 	} else if !sm.Finalized() {
 		t.Fatalf("Wrong should have marked the instance as being finalized")
@@ -96,7 +98,9 @@ func AddToTailTest(t *testing.T, factory Factory) {
 		BetaRogue:         5,
 		ConcurrentRepolls: 1,
 	}
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	block := &TestBlock{
 		TestDecidable: choices.TestDecidable{
@@ -129,7 +133,9 @@ func AddToNonTailTest(t *testing.T, factory Factory) {
 		BetaRogue:         5,
 		ConcurrentRepolls: 1,
 	}
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	firstBlock := &TestBlock{
 		TestDecidable: choices.TestDecidable{
@@ -180,7 +186,9 @@ func AddToUnknownTest(t *testing.T, factory Factory) {
 		BetaRogue:         5,
 		ConcurrentRepolls: 1,
 	}
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	parent := &TestBlock{TestDecidable: choices.TestDecidable{
 		IDV:     ids.Empty.Prefix(1),
@@ -220,7 +228,9 @@ func IssuedPreviouslyAcceptedTest(t *testing.T, factory Factory) {
 		BetaRogue:         5,
 		ConcurrentRepolls: 1,
 	}
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	if !sm.Issued(Genesis) {
 		t.Fatalf("Should have marked an accepted block as having been issued")
@@ -239,7 +249,9 @@ func IssuedPreviouslyRejectedTest(t *testing.T, factory Factory) {
 		BetaRogue:         5,
 		ConcurrentRepolls: 1,
 	}
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	block := &TestBlock{
 		TestDecidable: choices.TestDecidable{
@@ -266,7 +278,9 @@ func IssuedUnissuedTest(t *testing.T, factory Factory) {
 		BetaRogue:         5,
 		ConcurrentRepolls: 1,
 	}
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	block := &TestBlock{
 		TestDecidable: choices.TestDecidable{
@@ -293,7 +307,9 @@ func IssuedIssuedTest(t *testing.T, factory Factory) {
 		BetaRogue:         5,
 		ConcurrentRepolls: 1,
 	}
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	block := &TestBlock{
 		TestDecidable: choices.TestDecidable{
@@ -324,7 +340,9 @@ func RecordPollAcceptSingleBlockTest(t *testing.T, factory Factory) {
 		BetaRogue:         3,
 		ConcurrentRepolls: 1,
 	}
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	block := &TestBlock{
 		TestDecidable: choices.TestDecidable{
@@ -377,7 +395,9 @@ func RecordPollAcceptAndRejectTest(t *testing.T, factory Factory) {
 		BetaRogue:         2,
 		ConcurrentRepolls: 1,
 	}
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	firstBlock := &TestBlock{
 		TestDecidable: choices.TestDecidable{
@@ -446,7 +466,9 @@ func RecordPollWhenFinalizedTest(t *testing.T, factory Factory) {
 		BetaRogue:         2,
 		ConcurrentRepolls: 1,
 	}
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	votes := ids.Bag{}
 	votes.Add(GenesisID)
@@ -456,7 +478,7 @@ func RecordPollWhenFinalizedTest(t *testing.T, factory Factory) {
 		t.Fatalf("accepted/rejected %d/%d blocks but should be %d/%d", accepted.Len(), rejected.Len(), 0, 0)
 	} else if !sm.Finalized() {
 		t.Fatalf("Consensus should still be finalized")
-	} else if pref := sm.Preference(); !GenesisID.Equals(pref) {
+	} else if pref := sm.Preference(); GenesisID != pref {
 		t.Fatalf("Wrong preference listed")
 	}
 }
@@ -473,7 +495,9 @@ func RecordPollRejectTransitivelyTest(t *testing.T, factory Factory) {
 		BetaRogue:         1,
 		ConcurrentRepolls: 1,
 	}
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	block0 := &TestBlock{
 		TestDecidable: choices.TestDecidable{
@@ -533,7 +557,7 @@ func RecordPollRejectTransitivelyTest(t *testing.T, factory Factory) {
 
 	if !sm.Finalized() {
 		t.Fatalf("Finalized too late")
-	} else if pref := sm.Preference(); !block0.ID().Equals(pref) {
+	} else if pref := sm.Preference(); block0.ID() != pref {
 		t.Fatalf("Wrong preference listed")
 	} else if status := block0.Status(); status != choices.Accepted {
 		t.Fatalf("Wrong status returned")
@@ -556,7 +580,9 @@ func RecordPollTransitivelyResetConfidenceTest(t *testing.T, factory Factory) {
 		BetaRogue:         2,
 		ConcurrentRepolls: 1,
 	}
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	block0 := &TestBlock{
 		TestDecidable: choices.TestDecidable{
@@ -620,7 +646,7 @@ func RecordPollTransitivelyResetConfidenceTest(t *testing.T, factory Factory) {
 		t.Fatalf("accepted/rejected %d/%d blocks but should be %d/%d", accepted.Len(), rejected.Len(), 0, 0)
 	} else if sm.Finalized() {
 		t.Fatalf("Finalized too early")
-	} else if pref := sm.Preference(); !block2.ID().Equals(pref) {
+	} else if pref := sm.Preference(); block2.ID() != pref {
 		t.Fatalf("Wrong preference listed")
 	}
 
@@ -631,7 +657,7 @@ func RecordPollTransitivelyResetConfidenceTest(t *testing.T, factory Factory) {
 		t.Fatalf("accepted/rejected %d/%d blocks but should be %d/%d", accepted.Len(), rejected.Len(), 0, 0)
 	} else if sm.Finalized() {
 		t.Fatalf("Finalized too early")
-	} else if pref := sm.Preference(); !block2.ID().Equals(pref) {
+	} else if pref := sm.Preference(); block2.ID() != pref {
 		t.Fatalf("Wrong preference listed")
 	} else if accepted, rejected, err := sm.RecordPoll(votesFor2); err != nil {
 		t.Fatal(err)
@@ -639,7 +665,7 @@ func RecordPollTransitivelyResetConfidenceTest(t *testing.T, factory Factory) {
 		t.Fatalf("accepted/rejected %d/%d blocks but should be %d/%d", accepted.Len(), rejected.Len(), 0, 0)
 	} else if sm.Finalized() {
 		t.Fatalf("Finalized too early")
-	} else if pref := sm.Preference(); !block2.ID().Equals(pref) {
+	} else if pref := sm.Preference(); block2.ID() != pref {
 		t.Fatalf("Wrong preference listed")
 	}
 
@@ -651,7 +677,7 @@ func RecordPollTransitivelyResetConfidenceTest(t *testing.T, factory Factory) {
 		t.Fatalf("accepted/rejected %d/%d blocks but should be %d/%d", accepted.Len(), rejected.Len(), 1, 1)
 	} else if sm.Finalized() {
 		t.Fatalf("Finalized too early")
-	} else if pref := sm.Preference(); !block2.ID().Equals(pref) {
+	} else if pref := sm.Preference(); block2.ID() != pref {
 		t.Fatalf("Wrong preference listed")
 	} else if accepted, rejected, err := sm.RecordPoll(votesFor3); err != nil {
 		t.Fatal(err)
@@ -659,7 +685,7 @@ func RecordPollTransitivelyResetConfidenceTest(t *testing.T, factory Factory) {
 		t.Fatalf("accepted/rejected %d/%d blocks but should be %d/%d", accepted.Len(), rejected.Len(), 1, 1)
 	} else if !sm.Finalized() {
 		t.Fatalf("Finalized too late")
-	} else if pref := sm.Preference(); !block3.ID().Equals(pref) {
+	} else if pref := sm.Preference(); block3.ID() != pref {
 		t.Fatalf("Wrong preference listed")
 	} else if status := block0.Status(); status != choices.Rejected {
 		t.Fatalf("Wrong status returned")
@@ -684,7 +710,9 @@ func RecordPollInvalidVoteTest(t *testing.T, factory Factory) {
 		BetaRogue:         2,
 		ConcurrentRepolls: 1,
 	}
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	block := &TestBlock{
 		TestDecidable: choices.TestDecidable{
@@ -721,7 +749,7 @@ func RecordPollInvalidVoteTest(t *testing.T, factory Factory) {
 		t.Fatalf("accepted/rejected %d/%d blocks but should be %d/%d", accepted.Len(), rejected.Len(), 0, 0)
 	} else if sm.Finalized() {
 		t.Fatalf("Finalized too early")
-	} else if pref := sm.Preference(); !block.ID().Equals(pref) {
+	} else if pref := sm.Preference(); block.ID() != pref {
 		t.Fatalf("Wrong preference listed")
 	}
 }
@@ -738,7 +766,9 @@ func RecordPollTransitiveVotingTest(t *testing.T, factory Factory) {
 		BetaRogue:         1,
 		ConcurrentRepolls: 1,
 	}
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	block0 := &TestBlock{
 		TestDecidable: choices.TestDecidable{
@@ -828,19 +858,21 @@ func RecordPollTransitiveVotingTest(t *testing.T, factory Factory) {
 	// 2   4
 	// Tail = 2
 
-	if pref := sm.Preference(); !block2.ID().Equals(pref) {
+	pref := sm.Preference()
+	switch {
+	case block2.ID() != pref:
 		t.Fatalf("Wrong preference listed")
-	} else if sm.Finalized() {
+	case sm.Finalized():
 		t.Fatalf("Finalized too early")
-	} else if block0.Status() != choices.Accepted {
+	case block0.Status() != choices.Accepted:
 		t.Fatalf("Should have accepted")
-	} else if block1.Status() != choices.Processing {
+	case block1.Status() != choices.Processing:
 		t.Fatalf("Should have accepted")
-	} else if block2.Status() != choices.Processing {
+	case block2.Status() != choices.Processing:
 		t.Fatalf("Should have accepted")
-	} else if block3.Status() != choices.Processing {
+	case block3.Status() != choices.Processing:
 		t.Fatalf("Should have rejected")
-	} else if block4.Status() != choices.Processing {
+	case block4.Status() != choices.Processing:
 		t.Fatalf("Should have rejected")
 	}
 
@@ -856,19 +888,21 @@ func RecordPollTransitiveVotingTest(t *testing.T, factory Factory) {
 	//   2
 	// Tail = 2
 
-	if pref := sm.Preference(); !block2.ID().Equals(pref) {
+	pref = sm.Preference()
+	switch {
+	case block2.ID() != pref:
 		t.Fatalf("Wrong preference listed")
-	} else if !sm.Finalized() {
+	case !sm.Finalized():
 		t.Fatalf("Finalized too late")
-	} else if block0.Status() != choices.Accepted {
+	case block0.Status() != choices.Accepted:
 		t.Fatalf("Should have accepted")
-	} else if block1.Status() != choices.Accepted {
+	case block1.Status() != choices.Accepted:
 		t.Fatalf("Should have accepted")
-	} else if block2.Status() != choices.Accepted {
+	case block2.Status() != choices.Accepted:
 		t.Fatalf("Should have accepted")
-	} else if block3.Status() != choices.Rejected {
+	case block3.Status() != choices.Rejected:
 		t.Fatalf("Should have rejected")
-	} else if block4.Status() != choices.Rejected {
+	case block4.Status() != choices.Rejected:
 		t.Fatalf("Should have rejected")
 	}
 }
@@ -885,25 +919,27 @@ func RecordPollDivergedVotingTest(t *testing.T, factory Factory) {
 		BetaRogue:         2,
 		ConcurrentRepolls: 1,
 	}
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	block0 := &TestBlock{
 		TestDecidable: choices.TestDecidable{
-			IDV:     ids.NewID([32]byte{0x0f}), // 0b1111
+			IDV:     ids.ID{0x0f}, // 0b1111
 			StatusV: choices.Processing,
 		},
 		ParentV: Genesis,
 	}
 	block1 := &TestBlock{
 		TestDecidable: choices.TestDecidable{
-			IDV:     ids.NewID([32]byte{0x08}), // 0b1000
+			IDV:     ids.ID{0x08}, // 0b1000
 			StatusV: choices.Processing,
 		},
 		ParentV: Genesis,
 	}
 	block2 := &TestBlock{
 		TestDecidable: choices.TestDecidable{
-			IDV:     ids.NewID([32]byte{0x01}), // 0b0001
+			IDV:     ids.ID{0x01}, // 0b0001
 			StatusV: choices.Processing,
 		},
 		ParentV: Genesis,
@@ -1126,7 +1162,9 @@ func ErrorOnInitialRejectionTest(t *testing.T, factory Factory) {
 		ConcurrentRepolls: 1,
 	}
 
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	rejectedBlock := &TestBlock{TestDecidable: choices.TestDecidable{
 		IDV:     ids.Empty.Prefix(1),
@@ -1162,7 +1200,9 @@ func ErrorOnAcceptTest(t *testing.T, factory Factory) {
 		ConcurrentRepolls: 1,
 	}
 
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	block := &TestBlock{
 		TestDecidable: choices.TestDecidable{
@@ -1201,7 +1241,9 @@ func ErrorOnRejectSiblingTest(t *testing.T, factory Factory) {
 		ConcurrentRepolls: 1,
 	}
 
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	block0 := &TestBlock{
 		TestDecidable: choices.TestDecidable{
@@ -1251,7 +1293,9 @@ func ErrorOnTransitiveRejectionTest(t *testing.T, factory Factory) {
 		ConcurrentRepolls: 1,
 	}
 
-	sm.Initialize(ctx, params, GenesisID)
+	if err := sm.Initialize(ctx, params, GenesisID); err != nil {
+		t.Fatal(err)
+	}
 
 	block0 := &TestBlock{
 		TestDecidable: choices.TestDecidable{
@@ -1317,11 +1361,15 @@ func RandomizedConsistencyTest(t *testing.T, factory Factory) {
 	n.Initialize(params, numColors)
 
 	for i := 0; i < numNodes; i++ {
-		n.AddNode(factory.New())
+		if err := n.AddNode(factory.New()); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	for !n.Finalized() {
-		n.Round()
+		if err := n.Round(); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if !n.Agreement() {

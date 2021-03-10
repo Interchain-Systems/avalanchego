@@ -27,7 +27,7 @@ func (c *Commit) Verify() error {
 	if !ok {
 		if err := c.Reject(); err == nil {
 			if err := c.vm.DB.Commit(); err != nil {
-				c.vm.Ctx.Log.Error("error committing Commit block as rejected: %s", err)
+				return fmt.Errorf("failed to commit VM's database: %w", err)
 			}
 		} else {
 			c.vm.DB.Abort()
@@ -37,7 +37,7 @@ func (c *Commit) Verify() error {
 
 	c.onAcceptDB, c.onAcceptFunc = parent.onCommit()
 
-	c.vm.currentBlocks[c.ID().Key()] = c
+	c.vm.currentBlocks[c.ID()] = c
 	c.parentBlock().addChild(c)
 	return nil
 }
@@ -59,9 +59,9 @@ func (vm *VM) newCommitBlock(parentID ids.ID, height uint64) (*Commit, error) {
 	// We serialize this block as a Block so that it can be deserialized into a
 	// Block
 	blk := Block(commit)
-	bytes, err := Codec.Marshal(&blk)
+	bytes, err := Codec.Marshal(codecVersion, &blk)
 	if err != nil {
-		return nil, fmt.Errorf("could not marshal commit block: %w", err)
+		return nil, fmt.Errorf("failed to marshal commit block: %w", err)
 	}
 	commit.Block.Initialize(bytes, vm.SnowmanVM)
 	return commit, nil

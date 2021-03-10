@@ -27,10 +27,16 @@ var (
 // StaticService defines the base service for the asset vm
 type StaticService struct{}
 
+// CreateStaticService ...
+func CreateStaticService() *StaticService {
+	return &StaticService{}
+}
+
 // BuildGenesisArgs are arguments for BuildGenesis
 type BuildGenesisArgs struct {
 	NetworkID   cjson.Uint32               `json:"networkID"`
 	GenesisData map[string]AssetDefinition `json:"genesisData"`
+	Encoding    formatting.Encoding        `json:"encoding"`
 }
 
 // AssetDefinition ...
@@ -39,12 +45,13 @@ type AssetDefinition struct {
 	Symbol       string                   `json:"symbol"`
 	Denomination cjson.Uint8              `json:"denomination"`
 	InitialState map[string][]interface{} `json:"initialState"`
-	Memo         formatting.CB58          `json:"memo"`
+	Memo         string                   `json:"memo"`
 }
 
 // BuildGenesisReply is the reply from BuildGenesis
 type BuildGenesisReply struct {
-	Bytes formatting.CB58 `json:"bytes"`
+	Bytes    string              `json:"bytes"`
+	Encoding formatting.Encoding `json:"encoding"`
 }
 
 // BuildGenesis returns the UTXOs such that at least one address in [args.Addresses] is
@@ -52,7 +59,8 @@ type BuildGenesisReply struct {
 func (ss *StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, reply *BuildGenesisReply) error {
 	errs := wrappers.Errs{}
 
-	c := codec.New(math.MaxUint32, 1<<20)
+	c := codec.New(codec.DefaultTagName, 1<<20)
+	manager := codec.NewManager(math.MaxUint32)
 	errs.Add(
 		c.RegisterType(&BaseTx{}),
 		c.RegisterType(&CreateAssetTx{}),
@@ -64,6 +72,7 @@ func (ss *StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, r
 		c.RegisterType(&secp256k1fx.TransferOutput{}),
 		c.RegisterType(&secp256k1fx.MintOperation{}),
 		c.RegisterType(&secp256k1fx.Credential{}),
+		manager.RegisterCodec(codecVersion, c),
 	)
 	if errs.Errored() {
 		return errs.Err
@@ -71,13 +80,18 @@ func (ss *StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, r
 
 	g := Genesis{}
 	for assetAlias, assetDefinition := range args.GenesisData {
+		assetMemo, err := formatting.Decode(args.Encoding, assetDefinition.Memo)
+
+		if err != nil {
+			return fmt.Errorf("problem formatting asset definition memo due to: %w", err)
+		}
 		asset := GenesisAsset{
 			Alias: assetAlias,
 			CreateAssetTx: CreateAssetTx{
 				BaseTx: BaseTx{BaseTx: avax.BaseTx{
 					NetworkID:    uint32(args.NetworkID),
 					BlockchainID: ids.Empty,
-					Memo:         assetDefinition.Memo.Bytes,
+					Memo:         assetMemo,
 				}},
 				Name:         assetDefinition.Name,
 				Symbol:       assetDefinition.Symbol,
@@ -151,7 +165,7 @@ func (ss *StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, r
 					return errUnknownAssetType
 				}
 			}
-			initialState.Sort(c)
+			initialState.Sort(manager)
 			asset.States = append(asset.States, initialState)
 		}
 		asset.Sort()
@@ -159,11 +173,15 @@ func (ss *StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, r
 	}
 	g.Sort()
 
-	b, err := c.Marshal(&g)
+	b, err := manager.Marshal(codecVersion, &g)
 	if err != nil {
 		return fmt.Errorf("problem marshaling genesis: %w", err)
 	}
 
-	reply.Bytes.Bytes = b
+	reply.Bytes, err = formatting.Encode(args.Encoding, b)
+	if err != nil {
+		return fmt.Errorf("couldn't encode genesis as string: %s", err)
+	}
+	reply.Encoding = args.Encoding
 	return nil
 }

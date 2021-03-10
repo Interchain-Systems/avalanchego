@@ -51,11 +51,11 @@ func (tq *timeoutQueue) Pop() interface{} {
 // AdaptiveTimeoutConfig contains the parameters that should be provided to the
 // adaptive timeout manager.
 type AdaptiveTimeoutConfig struct {
-	InitialTimeout    time.Duration
-	MinimumTimeout    time.Duration
-	MaximumTimeout    time.Duration
-	TimeoutMultiplier float64
-	TimeoutReduction  time.Duration
+	InitialTimeout time.Duration
+	MinimumTimeout time.Duration
+	MaximumTimeout time.Duration
+	TimeoutInc     time.Duration
+	TimeoutDec     time.Duration
 
 	Namespace  string
 	Registerer prometheus.Registerer
@@ -65,14 +65,14 @@ type AdaptiveTimeoutConfig struct {
 type AdaptiveTimeoutManager struct {
 	currentDurationMetric prometheus.Gauge
 
-	minimumTimeout    time.Duration
-	maximumTimeout    time.Duration
-	timeoutMultiplier float64
-	timeoutReduction  time.Duration
+	minimumTimeout time.Duration
+	maximumTimeout time.Duration
+	timeoutInc     time.Duration
+	timeoutDec     time.Duration
 
 	lock           sync.Mutex
 	currentTimeout time.Duration // Amount of time before a timeout
-	timeoutMap     map[[32]byte]*adaptiveTimeout
+	timeoutMap     map[ids.ID]*adaptiveTimeout
 	timeoutQueue   timeoutQueue
 	timer          *Timer // Timer that will fire to clear the timeouts
 }
@@ -86,10 +86,10 @@ func (tm *AdaptiveTimeoutManager) Initialize(config *AdaptiveTimeoutConfig) erro
 	})
 	tm.minimumTimeout = config.MinimumTimeout
 	tm.maximumTimeout = config.MaximumTimeout
-	tm.timeoutMultiplier = config.TimeoutMultiplier
-	tm.timeoutReduction = config.TimeoutReduction
+	tm.timeoutInc = config.TimeoutInc
+	tm.timeoutDec = config.TimeoutDec
 	tm.currentTimeout = config.InitialTimeout
-	tm.timeoutMap = make(map[[32]byte]*adaptiveTimeout)
+	tm.timeoutMap = make(map[ids.ID]*adaptiveTimeout)
 	tm.timer = NewTimer(tm.Timeout)
 	return config.Registerer.Register(tm.currentDurationMetric)
 }
@@ -153,7 +153,7 @@ func (tm *AdaptiveTimeoutManager) put(id ids.ID, handler func()) time.Time {
 		duration: tm.currentTimeout,
 		deadline: currentTime.Add(tm.currentTimeout),
 	}
-	tm.timeoutMap[id.Key()] = timeout
+	tm.timeoutMap[id] = timeout
 	heap.Push(&tm.timeoutQueue, timeout)
 
 	tm.registerTimeout()
@@ -161,8 +161,7 @@ func (tm *AdaptiveTimeoutManager) put(id ids.ID, handler func()) time.Time {
 }
 
 func (tm *AdaptiveTimeoutManager) remove(id ids.ID, currentTime time.Time) {
-	key := id.Key()
-	timeout, exists := tm.timeoutMap[key]
+	timeout, exists := tm.timeoutMap[id]
 	if !exists {
 		return
 	}
@@ -171,8 +170,8 @@ func (tm *AdaptiveTimeoutManager) remove(id ids.ID, currentTime time.Time) {
 		// This request is being removed because it timed out.
 		if timeout.duration >= tm.currentTimeout {
 			// If the current timeout duration is less than or equal to the
-			// timeout that was triggered, double the duration.
-			tm.currentTimeout = time.Duration(float64(tm.currentTimeout) * tm.timeoutMultiplier)
+			// timeout that was triggered, increase the timeout.
+			tm.currentTimeout += tm.timeoutInc
 
 			if tm.currentTimeout > tm.maximumTimeout {
 				// Make sure that we never get stuck in a bad situation
@@ -183,8 +182,8 @@ func (tm *AdaptiveTimeoutManager) remove(id ids.ID, currentTime time.Time) {
 		// This request is being removed because it finished successfully.
 		if timeout.duration <= tm.currentTimeout {
 			// If the current timeout duration is greater than or equal to the
-			// timeout that was fullfilled, reduce future timeouts.
-			tm.currentTimeout -= tm.timeoutReduction
+			// timeout that was fulfilled, reduce future timeouts.
+			tm.currentTimeout -= tm.timeoutDec
 
 			if tm.currentTimeout < tm.minimumTimeout {
 				// Make sure that we never get stuck in a bad situation
@@ -197,7 +196,7 @@ func (tm *AdaptiveTimeoutManager) remove(id ids.ID, currentTime time.Time) {
 	tm.currentDurationMetric.Set(float64(tm.currentTimeout))
 
 	// Remove the timeout from the map
-	delete(tm.timeoutMap, key)
+	delete(tm.timeoutMap, id)
 
 	// Remove the timeout from the queue
 	heap.Remove(&tm.timeoutQueue, timeout.index)

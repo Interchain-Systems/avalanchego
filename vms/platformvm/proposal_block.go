@@ -4,6 +4,8 @@
 package platformvm
 
 import (
+	"fmt"
+
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/database/versiondb"
 	"github.com/ava-labs/avalanchego/ids"
@@ -41,6 +43,14 @@ func (pb *ProposalBlock) Accept() error {
 	return nil
 }
 
+// Reject implements the snowman.Block interface
+func (pb *ProposalBlock) Reject() error {
+	if err := pb.vm.mempool.IssueTx(&pb.Tx); err != nil {
+		pb.vm.Ctx.Log.Verbo("failed to reissue tx %q due to: %s", pb.Tx.ID(), err)
+	}
+	return pb.CommonBlock.Reject()
+}
+
 // Initialize this block.
 // Sets [pb.vm] to [vm] and populates non-serialized fields
 // This method should be called when a block is unmarshaled from bytes
@@ -48,13 +58,13 @@ func (pb *ProposalBlock) initialize(vm *VM, bytes []byte) error {
 	pb.vm = vm
 	pb.Block.Initialize(bytes, vm.SnowmanVM)
 
-	unsignedBytes, err := pb.vm.codec.Marshal(&pb.Tx.UnsignedTx)
+	unsignedBytes, err := pb.vm.codec.Marshal(codecVersion, &pb.Tx.UnsignedTx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal unsigned tx: %w", err)
 	}
-	signedBytes, err := pb.vm.codec.Marshal(&pb.Tx)
+	signedBytes, err := pb.vm.codec.Marshal(codecVersion, &pb.Tx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal tx: %w", err)
 	}
 	pb.Tx.Initialize(unsignedBytes, signedBytes)
 	return nil
@@ -107,7 +117,7 @@ func (pb *ProposalBlock) Verify() error {
 	if !ok {
 		if err := pb.Reject(); err == nil {
 			if err := pb.vm.DB.Commit(); err != nil {
-				pb.vm.Ctx.Log.Error("error committing Proposal block as rejected: %s", err)
+				return fmt.Errorf("couldn't commit VM's database: %w", err)
 			}
 		} else {
 			pb.vm.DB.Abort()
@@ -123,13 +133,13 @@ func (pb *ProposalBlock) Verify() error {
 	var err TxError
 	pb.onCommitDB, pb.onAbortDB, pb.onCommitFunc, pb.onAbortFunc, err = tx.SemanticVerify(pb.vm, pdb, &pb.Tx)
 	if err != nil {
-		pb.vm.droppedTxCache.Put(txID, nil) // cache tx as dropped
+		pb.vm.droppedTxCache.Put(txID, err.Error()) // cache tx as dropped
 		// If this block's transaction proposes to advance the timestamp, the transaction may fail
 		// verification now but be valid in the future, so don't (permanently) mark the block as rejected.
 		if !err.Temporary() {
 			if err := pb.Reject(); err == nil {
 				if err := pb.vm.DB.Commit(); err != nil {
-					pb.vm.Ctx.Log.Error("error committing Proposal block as rejected: %s", err)
+					return fmt.Errorf("couldn't commit VM's database: %w", err)
 				}
 			} else {
 				pb.vm.DB.Abort()
@@ -140,20 +150,20 @@ func (pb *ProposalBlock) Verify() error {
 
 	txBytes := tx.Bytes()
 	if err := pb.vm.putTx(pb.onCommitDB, txID, txBytes); err != nil {
-		return err
+		return fmt.Errorf("failed to put tx %s in database: %w", txID, err)
 	}
 	if err := pb.vm.putStatus(pb.onCommitDB, txID, Committed); err != nil {
-		return err
+		return fmt.Errorf("failed to put status of tx %s: %w", txID, err)
 	}
 
 	if err := pb.vm.putTx(pb.onAbortDB, txID, txBytes); err != nil {
-		return err
+		return fmt.Errorf("failed to put tx %s in database: %w", txID, err)
 	}
 	if err := pb.vm.putStatus(pb.onAbortDB, txID, Aborted); err != nil {
-		return err
+		return fmt.Errorf("failed to put status of tx %s: %w", txID, err)
 	}
 
-	pb.vm.currentBlocks[pb.ID().Key()] = pb
+	pb.vm.currentBlocks[pb.ID()] = pb
 	parentIntf.addChild(pb)
 	return nil
 }
@@ -164,11 +174,11 @@ func (pb *ProposalBlock) Options() ([2]snowman.Block, error) {
 
 	commit, err := pb.vm.newCommitBlock(blockID, pb.Height()+1)
 	if err != nil {
-		return [2]snowman.Block{}, err
+		return [2]snowman.Block{}, fmt.Errorf("failed to create commit block: %w", err)
 	}
 	abort, err := pb.vm.newAbortBlock(blockID, pb.Height()+1)
 	if err != nil {
-		return [2]snowman.Block{}, err
+		return [2]snowman.Block{}, fmt.Errorf("failed to create abort block: %w", err)
 	}
 
 	tx, ok := pb.Tx.UnsignedTx.(UnsignedProposalTx)
@@ -197,9 +207,9 @@ func (vm *VM) newProposalBlock(parentID ids.ID, height uint64, tx Tx) (*Proposal
 	// We marshal the block in this way (as a Block) so that we can unmarshal
 	// it into a Block (rather than a *ProposalBlock)
 	block := Block(pb)
-	bytes, err := Codec.Marshal(&block)
+	bytes, err := Codec.Marshal(codecVersion, &block)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to marshal block: %w", err)
 	}
 	pb.Initialize(bytes, vm.SnowmanVM)
 	return pb, nil

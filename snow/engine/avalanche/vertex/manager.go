@@ -9,11 +9,11 @@ import (
 	"github.com/ava-labs/avalanchego/snow/consensus/snowstorm"
 )
 
-// Manager defines the persistant storage that is required by the consensus
+// Manager defines the persistent storage that is required by the consensus
 // engine
 type Manager interface {
 	// Create a new vertex from the contents of a vertex
-	BuildVertex(parentIDs ids.Set, txs []snowstorm.Tx) (avalanche.Vertex, error)
+	BuildVertex(parentIDs []ids.ID, txs []snowstorm.Tx) (avalanche.Vertex, error)
 
 	// Attempt to convert a stream of bytes into a vertex
 	ParseVertex(vertex []byte) (avalanche.Vertex, error)

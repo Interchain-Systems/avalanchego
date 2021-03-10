@@ -6,12 +6,9 @@ package avm
 import (
 	"bytes"
 	"fmt"
+	"math/rand"
 	"strings"
 	"testing"
-
-	"math/rand"
-
-	"github.com/stretchr/testify/assert"
 
 	"github.com/ava-labs/avalanchego/api"
 	"github.com/ava-labs/avalanchego/api/keystore"
@@ -25,6 +22,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/sampler"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
+	"github.com/stretchr/testify/assert"
 )
 
 var (
@@ -38,7 +36,10 @@ var (
 // 4) atomic memory to use in tests
 func setup(t *testing.T) ([]byte, *VM, *Service, *atomic.Memory) {
 	genesisBytes, _, vm, m := GenesisVM(t)
-	keystore := keystore.CreateTestKeystore()
+	keystore, err := keystore.CreateTestKeystore()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := keystore.AddUser(username, password); err != nil {
 		t.Fatalf("couldn't add user: %s", err)
 	}
@@ -89,19 +90,18 @@ func sampleAddrs(t *testing.T, vm *VM, addrs []ids.ShortID) ([]ids.ShortID, []st
 	}
 
 	numAddrs := 1 + rand.Intn(len(addrs)) // #nosec G404
-	for i := 0; i < numAddrs; i++ {
-		indices, err := sampler.Sample(1)
-		if err != nil {
-			t.Fatal(err)
-		} else if len(indices) != 1 {
-			t.Fatal("should have gotten only 1 index")
-		}
-		addr := addrs[indices[0]]
-		sampledAddrs = append(sampledAddrs, addr)
+	indices, err := sampler.Sample(numAddrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, index := range indices {
+		addr := addrs[index]
 		addrStr, err := vm.FormatLocalAddress(addr)
 		if err != nil {
 			t.Fatal(err)
 		}
+
+		sampledAddrs = append(sampledAddrs, addr)
 		sampledAddrsStr = append(sampledAddrsStr, addrStr)
 	}
 	return sampledAddrs, sampledAddrsStr
@@ -131,7 +131,7 @@ func verifyTxFeeDeducted(t *testing.T, s *Service, fromAddrs []ids.ShortID, numT
 			reply,
 		)
 		if err != nil {
-			return fmt.Errorf("couldn't get balance of %s: %s", addr, err)
+			return fmt.Errorf("couldn't get balance of %s: %w", addr, err)
 		}
 		balances[addr.Key()] = int(reply.Balance)
 	}
@@ -153,24 +153,30 @@ func verifyTxFeeDeducted(t *testing.T, s *Service, fromAddrs []ids.ShortID, numT
 func TestServiceIssueTx(t *testing.T) {
 	genesisBytes, vm, s, _ := setup(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
-	txArgs := &FormattedTx{}
-	txReply := &api.JsonTxID{}
+	txArgs := &api.FormattedTx{}
+	txReply := &api.JSONTxID{}
 	err := s.IssueTx(nil, txArgs, txReply)
 	if err == nil {
 		t.Fatal("Expected empty transaction to return an error")
 	}
 
 	tx := NewTx(t, genesisBytes, vm)
-	txArgs.Tx = formatting.CB58{Bytes: tx.Bytes()}
-	txReply = &api.JsonTxID{}
+	txArgs.Tx, err = formatting.Encode(formatting.Hex, tx.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	txArgs.Encoding = formatting.Hex
+	txReply = &api.JSONTxID{}
 	if err := s.IssueTx(nil, txArgs, txReply); err != nil {
 		t.Fatal(err)
 	}
-	if !txReply.TxID.Equals(tx.ID()) {
+	if txReply.TxID != tx.ID() {
 		t.Fatalf("Expected %q, got %q", txReply.TxID, tx.ID())
 	}
 }
@@ -178,11 +184,13 @@ func TestServiceIssueTx(t *testing.T) {
 func TestServiceGetTxStatus(t *testing.T) {
 	genesisBytes, vm, s, _ := setup(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
-	statusArgs := &api.JsonTxID{}
+	statusArgs := &api.JSONTxID{}
 	statusReply := &GetTxStatusReply{}
 	if err := s.GetTxStatus(nil, statusArgs, statusReply); err == nil {
 		t.Fatal("Expected empty transaction to return an error")
@@ -201,8 +209,15 @@ func TestServiceGetTxStatus(t *testing.T) {
 		)
 	}
 
-	txArgs := &FormattedTx{Tx: formatting.CB58{Bytes: tx.Bytes()}}
-	txReply := &api.JsonTxID{}
+	txStr, err := formatting.Encode(formatting.Hex, tx.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	txArgs := &api.FormattedTx{
+		Tx:       txStr,
+		Encoding: formatting.Hex,
+	}
+	txReply := &api.JSONTxID{}
 	if err := s.IssueTx(nil, txArgs, txReply); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +236,9 @@ func TestServiceGetTxStatus(t *testing.T) {
 func TestServiceGetBalance(t *testing.T) {
 	genesisBytes, vm, s, _ := setup(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
@@ -240,14 +257,16 @@ func TestServiceGetBalance(t *testing.T) {
 	balanceReply := &GetBalanceReply{}
 	err = s.GetBalance(nil, balanceArgs, balanceReply)
 	assert.NoError(t, err)
-	assert.Equal(t, uint64(balanceReply.Balance), uint64(startBalance))
+	assert.Equal(t, uint64(balanceReply.Balance), startBalance)
 	assert.Len(t, balanceReply.UTXOIDs, 1, "should have only returned 1 utxoID")
 }
 
 func TestServiceGetAllBalances(t *testing.T) {
 	genesisBytes, vm, s, _ := setup(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
@@ -259,7 +278,7 @@ func TestServiceGetAllBalances(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	balanceArgs := &api.JsonAddress{
+	balanceArgs := &api.JSONAddress{
 		Address: addrStr,
 	}
 	balanceReply := &GetAllBalancesReply{}
@@ -274,13 +293,15 @@ func TestServiceGetAllBalances(t *testing.T) {
 		t.Fatalf("Failed to get primary alias of genesis asset: %s", err)
 	}
 	assert.Equal(t, balance.AssetID, alias)
-	assert.Equal(t, uint64(balance.Balance), uint64(startBalance))
+	assert.Equal(t, uint64(balance.Balance), startBalance)
 }
 
 func TestServiceGetTx(t *testing.T) {
 	genesisBytes, vm, s, _ := setup(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
@@ -288,42 +309,55 @@ func TestServiceGetTx(t *testing.T) {
 	genesisTxBytes := genesisTx.Bytes()
 	txID := genesisTx.ID()
 
-	reply := FormattedTx{}
-	err := s.GetTx(nil, &api.JsonTxID{
+	reply := api.FormattedTx{}
+	err := s.GetTx(nil, &api.GetTxArgs{
 		TxID: txID,
 	}, &reply)
 	assert.NoError(t, err)
-	assert.Equal(t, genesisTxBytes, reply.Tx.Bytes, "Wrong tx returned from service.GetTx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	txBytes, err := formatting.Decode(reply.Encoding, reply.Tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, genesisTxBytes, txBytes, "Wrong tx returned from service.GetTx")
 }
 
 func TestServiceGetNilTx(t *testing.T) {
 	_, vm, s, _ := setup(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
-	reply := FormattedTx{}
-	err := s.GetTx(nil, &api.JsonTxID{}, &reply)
+	reply := api.FormattedTx{}
+	err := s.GetTx(nil, &api.GetTxArgs{}, &reply)
 	assert.Error(t, err, "Nil TxID should have returned an error")
 }
 
 func TestServiceGetUnknownTx(t *testing.T) {
 	_, vm, s, _ := setup(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
-	reply := FormattedTx{}
-	err := s.GetTx(nil, &api.JsonTxID{TxID: ids.Empty}, &reply)
+	reply := api.FormattedTx{}
+	err := s.GetTx(nil, &api.GetTxArgs{TxID: ids.Empty}, &reply)
 	assert.Error(t, err, "Unknown TxID should have returned an error")
 }
 
 func TestServiceGetUTXOs(t *testing.T) {
 	_, vm, s, m := setup(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
@@ -368,12 +402,13 @@ func TestServiceGetUTXOs(t *testing.T) {
 			},
 		}
 
-		utxoBytes, err := vm.codec.Marshal(utxo)
+		utxoBytes, err := vm.codec.Marshal(codecVersion, utxo)
 		if err != nil {
 			t.Fatal(err)
 		}
+		utxoID := utxo.InputID()
 		elems[i] = &atomic.Element{
-			Key:   utxo.InputID().Bytes(),
+			Key:   utxoID[:],
 			Value: utxoBytes,
 			Traits: [][]byte{
 				rawAddr.Bytes(),
@@ -407,66 +442,66 @@ func TestServiceGetUTXOs(t *testing.T) {
 		label     string
 		count     int
 		shouldErr bool
-		args      *GetUTXOsArgs
+		args      *api.GetUTXOsArgs
 	}{
 		{
 			label:     "invalid address: ''",
 			shouldErr: true,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{""},
 			},
 		},
 		{
 			label:     "invalid address: '-'",
 			shouldErr: true,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{"-"},
 			},
 		},
 		{
 			label:     "invalid address: 'foo'",
 			shouldErr: true,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{"foo"},
 			},
 		},
 		{
 			label:     "invalid address: 'foo-bar'",
 			shouldErr: true,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{"foo-bar"},
 			},
 		},
 		{
 			label:     "invalid address: '<ChainID>'",
 			shouldErr: true,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{vm.ctx.ChainID.String()},
 			},
 		},
 		{
 			label:     "invalid address: '<ChainID>-'",
 			shouldErr: true,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{fmt.Sprintf("%s-", vm.ctx.ChainID.String())},
 			},
 		},
 		{
 			label:     "invalid address: '<Unknown ID>-<addr>'",
 			shouldErr: true,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{unknownChainAddr},
 			},
 		},
 		{
 			label:     "no addresses",
 			shouldErr: true,
-			args:      &GetUTXOsArgs{},
+			args:      &api.GetUTXOsArgs{},
 		},
 		{
 			label: "get all X-chain UTXOs",
 			count: numUTXOs,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{
 					xAddr,
 				},
@@ -475,7 +510,7 @@ func TestServiceGetUTXOs(t *testing.T) {
 		{
 			label: "get one X-chain UTXO",
 			count: 1,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{
 					xAddr,
 				},
@@ -485,7 +520,7 @@ func TestServiceGetUTXOs(t *testing.T) {
 		{
 			label: "limit greater than number of UTXOs",
 			count: numUTXOs,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{
 					xAddr,
 				},
@@ -495,7 +530,7 @@ func TestServiceGetUTXOs(t *testing.T) {
 		{
 			label: "no utxos to return",
 			count: 0,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{
 					xEmptyAddr,
 				},
@@ -504,7 +539,7 @@ func TestServiceGetUTXOs(t *testing.T) {
 		{
 			label: "multiple address with utxos",
 			count: numUTXOs,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{
 					xEmptyAddr,
 					xAddr,
@@ -514,7 +549,7 @@ func TestServiceGetUTXOs(t *testing.T) {
 		{
 			label: "get all P-chain UTXOs",
 			count: numUTXOs,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{
 					xAddr,
 				},
@@ -525,7 +560,7 @@ func TestServiceGetUTXOs(t *testing.T) {
 			label:     "invalid source chain ID",
 			shouldErr: true,
 			count:     numUTXOs,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{
 					xAddr,
 				},
@@ -535,7 +570,7 @@ func TestServiceGetUTXOs(t *testing.T) {
 		{
 			label: "get all P-chain UTXOs",
 			count: numUTXOs,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{
 					xAddr,
 				},
@@ -545,7 +580,7 @@ func TestServiceGetUTXOs(t *testing.T) {
 		{
 			label:     "get UTXOs from multiple chains",
 			shouldErr: true,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{
 					xAddr,
 					pAddr,
@@ -555,7 +590,7 @@ func TestServiceGetUTXOs(t *testing.T) {
 		{
 			label:     "get UTXOs for an address on a different chain",
 			shouldErr: true,
-			args: &GetUTXOsArgs{
+			args: &api.GetUTXOsArgs{
 				Addresses: []string{
 					pAddr,
 				},
@@ -564,7 +599,7 @@ func TestServiceGetUTXOs(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.label, func(t *testing.T) {
-			reply := &GetUTXOsReply{}
+			reply := &api.GetUTXOsReply{}
 			err := s.GetUTXOs(nil, test.args, reply)
 			if err != nil {
 				if !test.shouldErr {
@@ -585,7 +620,9 @@ func TestServiceGetUTXOs(t *testing.T) {
 func TestGetAssetDescription(t *testing.T) {
 	genesisBytes, vm, s, _ := setup(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
@@ -612,7 +649,9 @@ func TestGetAssetDescription(t *testing.T) {
 func TestGetBalance(t *testing.T) {
 	genesisBytes, vm, s, _ := setup(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
@@ -641,7 +680,9 @@ func TestGetBalance(t *testing.T) {
 func TestCreateFixedCapAsset(t *testing.T) {
 	_, vm, s, _ := setupWithKeys(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
@@ -657,14 +698,14 @@ func TestCreateFixedCapAsset(t *testing.T) {
 	}
 	_, fromAddrsStr := sampleAddrs(t, vm, addrs)
 
-	err = s.CreateFixedCapAsset(nil, &CreateFixedCapAssetArgs{
-		JsonSpendHeader: api.JsonSpendHeader{
+	err = s.CreateFixedCapAsset(nil, &CreateAssetArgs{
+		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass: api.UserPass{
 				Username: username,
 				Password: password,
 			},
-			JsonFromAddrs:  api.JsonFromAddrs{From: fromAddrsStr},
-			JsonChangeAddr: api.JsonChangeAddr{ChangeAddr: changeAddrStr},
+			JSONFromAddrs:  api.JSONFromAddrs{From: fromAddrsStr},
+			JSONChangeAddr: api.JSONChangeAddr{ChangeAddr: changeAddrStr},
 		},
 		Name:         "testAsset",
 		Symbol:       "TEST",
@@ -684,29 +725,31 @@ func TestCreateFixedCapAsset(t *testing.T) {
 func TestCreateVariableCapAsset(t *testing.T) {
 	_, vm, s, _ := setupWithKeys(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
 	reply := AssetIDChangeAddr{}
-	addrStr, err := vm.FormatLocalAddress(keys[0].PublicKey().Address())
-	if err != nil {
-		t.Fatal(err)
-	}
-	changeAddrStr, err := vm.FormatLocalAddress(testChangeAddr)
+	minterAddrStr, err := vm.FormatLocalAddress(keys[0].PublicKey().Address())
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, fromAddrsStr := sampleAddrs(t, vm, addrs)
+	changeAddrStr := fromAddrsStr[0]
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	err = s.CreateVariableCapAsset(nil, &CreateVariableCapAssetArgs{
-		JsonSpendHeader: api.JsonSpendHeader{
+	err = s.CreateVariableCapAsset(nil, &CreateAssetArgs{
+		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass: api.UserPass{
 				Username: username,
 				Password: password,
 			},
-			JsonFromAddrs:  api.JsonFromAddrs{From: fromAddrsStr},
-			JsonChangeAddr: api.JsonChangeAddr{ChangeAddr: changeAddrStr},
+			JSONFromAddrs:  api.JSONFromAddrs{From: fromAddrsStr},
+			JSONChangeAddr: api.JSONChangeAddr{ChangeAddr: changeAddrStr},
 		},
 		Name:   "test asset",
 		Symbol: "TEST",
@@ -714,7 +757,7 @@ func TestCreateVariableCapAsset(t *testing.T) {
 			{
 				Threshold: 1,
 				Minters: []string{
-					addrStr,
+					minterAddrStr,
 				},
 			},
 		},
@@ -739,18 +782,18 @@ func TestCreateVariableCapAsset(t *testing.T) {
 	createdAssetID := reply.AssetID.String()
 	// Test minting of the created variable cap asset
 	mintArgs := &MintArgs{
-		JsonSpendHeader: api.JsonSpendHeader{
+		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass: api.UserPass{
 				Username: username,
 				Password: password,
 			},
-			JsonChangeAddr: api.JsonChangeAddr{ChangeAddr: changeAddrStr},
+			JSONChangeAddr: api.JSONChangeAddr{ChangeAddr: changeAddrStr},
 		},
 		Amount:  200,
 		AssetID: createdAssetID,
-		To:      addrStr,
+		To:      minterAddrStr, // Send newly minted tokens to this address
 	}
-	mintReply := &api.JsonTxIDChangeAddr{}
+	mintReply := &api.JSONTxIDChangeAddr{}
 	if err := s.Mint(nil, mintArgs, mintReply); err != nil {
 		t.Fatalf("Failed to mint variable cap asset due to: %s", err)
 	} else if mintReply.ChangeAddr != changeAddrStr {
@@ -770,21 +813,21 @@ func TestCreateVariableCapAsset(t *testing.T) {
 	}
 
 	sendArgs := &SendArgs{
-		JsonSpendHeader: api.JsonSpendHeader{
+		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass: api.UserPass{
 				Username: username,
 				Password: password,
 			},
-			JsonFromAddrs:  api.JsonFromAddrs{From: fromAddrsStr},
-			JsonChangeAddr: api.JsonChangeAddr{ChangeAddr: changeAddrStr},
+			JSONFromAddrs:  api.JSONFromAddrs{From: []string{minterAddrStr}},
+			JSONChangeAddr: api.JSONChangeAddr{ChangeAddr: changeAddrStr},
 		},
 		SendOutput: SendOutput{
 			Amount:  200,
 			AssetID: createdAssetID,
-			To:      addrStr,
+			To:      fromAddrsStr[0],
 		},
 	}
-	sendReply := &api.JsonTxIDChangeAddr{}
+	sendReply := &api.JSONTxIDChangeAddr{}
 	if err := s.Send(nil, sendArgs, sendReply); err != nil {
 		t.Fatalf("Failed to send newly minted variable cap asset due to: %s", err)
 	} else if sendReply.ChangeAddr != changeAddrStr {
@@ -795,15 +838,13 @@ func TestCreateVariableCapAsset(t *testing.T) {
 func TestNFTWorkflow(t *testing.T) {
 	_, vm, s, _ := setupWithKeys(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
 	fromAddrs, fromAddrsStr := sampleAddrs(t, vm, addrs)
-	changeAddrStr, err := vm.FormatLocalAddress(testChangeAddr)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	// Test minting of the created variable cap asset
 	addrStr, err := vm.FormatLocalAddress(keys[0].PublicKey().Address())
@@ -812,13 +853,13 @@ func TestNFTWorkflow(t *testing.T) {
 	}
 
 	createArgs := &CreateNFTAssetArgs{
-		JsonSpendHeader: api.JsonSpendHeader{
+		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass: api.UserPass{
 				Username: username,
 				Password: password,
 			},
-			JsonFromAddrs:  api.JsonFromAddrs{From: fromAddrsStr},
-			JsonChangeAddr: api.JsonChangeAddr{ChangeAddr: changeAddrStr},
+			JSONFromAddrs:  api.JSONFromAddrs{From: fromAddrsStr},
+			JSONChangeAddr: api.JSONChangeAddr{ChangeAddr: fromAddrsStr[0]},
 		},
 		Name:   "BIG COIN",
 		Symbol: "COIN",
@@ -834,8 +875,8 @@ func TestNFTWorkflow(t *testing.T) {
 	createReply := &AssetIDChangeAddr{}
 	if err := s.CreateNFTAsset(nil, createArgs, createReply); err != nil {
 		t.Fatalf("Failed to mint variable cap asset due to: %s", err)
-	} else if createReply.ChangeAddr != changeAddrStr {
-		t.Fatalf("expected change address to be %s but got %s", changeAddrStr, createReply.ChangeAddr)
+	} else if createReply.ChangeAddr != fromAddrsStr[0] {
+		t.Fatalf("expected change address to be %s but got %s", fromAddrsStr[0], createReply.ChangeAddr)
 	}
 
 	assetID := createReply.AssetID
@@ -849,29 +890,34 @@ func TestNFTWorkflow(t *testing.T) {
 	}
 	if err := createNFTTx.Accept(); err != nil {
 		t.Fatalf("Failed to accept CreateNFT transaction: %s", err)
-	} else if verifyTxFeeDeducted(t, s, fromAddrs, 1); err != nil {
+	} else if err := verifyTxFeeDeducted(t, s, fromAddrs, 1); err != nil {
 		t.Fatal(err)
 	}
 
+	payload, err := formatting.Encode(formatting.Hex, []byte{1, 2, 3, 4, 5})
+	if err != nil {
+		t.Fatal(err)
+	}
 	mintArgs := &MintNFTArgs{
-		JsonSpendHeader: api.JsonSpendHeader{
+		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass: api.UserPass{
 				Username: username,
 				Password: password,
 			},
-			JsonFromAddrs:  api.JsonFromAddrs{},
-			JsonChangeAddr: api.JsonChangeAddr{ChangeAddr: changeAddrStr},
+			JSONFromAddrs:  api.JSONFromAddrs{},
+			JSONChangeAddr: api.JSONChangeAddr{ChangeAddr: fromAddrsStr[0]},
 		},
-		AssetID: assetID.String(),
-		Payload: formatting.CB58{Bytes: []byte{1, 2, 3, 4, 5}},
-		To:      addrStr,
+		AssetID:  assetID.String(),
+		Payload:  payload,
+		To:       addrStr,
+		Encoding: formatting.Hex,
 	}
-	mintReply := &api.JsonTxIDChangeAddr{}
+	mintReply := &api.JSONTxIDChangeAddr{}
 
 	if err := s.MintNFT(nil, mintArgs, mintReply); err != nil {
 		t.Fatalf("MintNFT returned an error: %s", err)
-	} else if createReply.ChangeAddr != changeAddrStr {
-		t.Fatalf("expected change address to be %s but got %s", changeAddrStr, mintReply.ChangeAddr)
+	} else if createReply.ChangeAddr != fromAddrsStr[0] {
+		t.Fatalf("expected change address to be %s but got %s", fromAddrsStr[0], mintReply.ChangeAddr)
 	}
 
 	mintNFTTx := UniqueTx{
@@ -888,30 +934,32 @@ func TestNFTWorkflow(t *testing.T) {
 	}
 
 	sendArgs := &SendNFTArgs{
-		JsonSpendHeader: api.JsonSpendHeader{
+		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass: api.UserPass{
 				Username: username,
 				Password: password,
 			},
-			JsonFromAddrs:  api.JsonFromAddrs{},
-			JsonChangeAddr: api.JsonChangeAddr{ChangeAddr: changeAddrStr},
+			JSONFromAddrs:  api.JSONFromAddrs{},
+			JSONChangeAddr: api.JSONChangeAddr{ChangeAddr: fromAddrsStr[0]},
 		},
 		AssetID: assetID.String(),
 		GroupID: 0,
 		To:      addrStr,
 	}
-	sendReply := &api.JsonTxIDChangeAddr{}
+	sendReply := &api.JSONTxIDChangeAddr{}
 	if err := s.SendNFT(nil, sendArgs, sendReply); err != nil {
 		t.Fatalf("Failed to send NFT due to: %s", err)
-	} else if sendReply.ChangeAddr != changeAddrStr {
-		t.Fatalf("expected change address to be %s but got %s", changeAddrStr, sendReply.ChangeAddr)
+	} else if sendReply.ChangeAddr != fromAddrsStr[0] {
+		t.Fatalf("expected change address to be %s but got %s", fromAddrsStr[0], sendReply.ChangeAddr)
 	}
 }
 
 func TestImportExportKey(t *testing.T) {
 	_, vm, s, _ := setup(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
@@ -922,15 +970,18 @@ func TestImportExportKey(t *testing.T) {
 	}
 	sk := skIntf.(*crypto.PrivateKeySECP256K1R)
 
-	formattedKey := formatting.CB58{Bytes: sk.Bytes()}
+	privKeyStr, err := formatting.Encode(formatting.CB58, sk.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
 	importArgs := &ImportKeyArgs{
 		UserPass: api.UserPass{
 			Username: username,
 			Password: password,
 		},
-		PrivateKey: constants.SecretKeyPrefix + formatting.CB58{Bytes: sk.Bytes()}.String(),
+		PrivateKey: constants.SecretKeyPrefix + privKeyStr,
 	}
-	importReply := &api.JsonAddress{}
+	importReply := &api.JSONAddress{}
 	if err = s.ImportKey(nil, importArgs, importReply); err != nil {
 		t.Fatal(err)
 	}
@@ -955,11 +1006,11 @@ func TestImportExportKey(t *testing.T) {
 		t.Fatalf("ExportKeyReply private key: %s mssing secret key prefix: %s", exportReply.PrivateKey, constants.SecretKeyPrefix)
 	}
 
-	exportedKey := formatting.CB58{}
-	if err := exportedKey.FromString(strings.TrimPrefix(exportReply.PrivateKey, constants.SecretKeyPrefix)); err != nil {
+	parsedKeyBytes, err := formatting.Decode(formatting.CB58, strings.TrimPrefix(exportReply.PrivateKey, constants.SecretKeyPrefix))
+	if err != nil {
 		t.Fatal("Failed to parse exported private key")
 	}
-	if !bytes.Equal(exportedKey.Bytes, formattedKey.Bytes) {
+	if !bytes.Equal(sk.Bytes(), parsedKeyBytes) {
 		t.Fatal("Unexpected key was found in ExportKeyReply")
 	}
 }
@@ -968,7 +1019,9 @@ func TestImportAVMKeyNoDuplicates(t *testing.T) {
 	_, vm, s, _ := setup(t)
 	ctx := vm.ctx
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		ctx.Lock.Unlock()
 	}()
 
@@ -978,15 +1031,18 @@ func TestImportAVMKeyNoDuplicates(t *testing.T) {
 		t.Fatalf("problem generating private key: %s", err)
 	}
 	sk := skIntf.(*crypto.PrivateKeySECP256K1R)
-
+	privKeyStr, err := formatting.Encode(formatting.CB58, sk.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
 	args := ImportKeyArgs{
 		UserPass: api.UserPass{
 			Username: username,
 			Password: password,
 		},
-		PrivateKey: constants.SecretKeyPrefix + formatting.CB58{Bytes: sk.Bytes()}.String(),
+		PrivateKey: constants.SecretKeyPrefix + privKeyStr,
 	}
-	reply := api.JsonAddress{}
+	reply := api.JSONAddress{}
 	if err = s.ImportKey(nil, &args, &reply); err != nil {
 		t.Fatal(err)
 	}
@@ -1000,7 +1056,7 @@ func TestImportAVMKeyNoDuplicates(t *testing.T) {
 		t.Fatalf("Reply address: %s did not match expected address: %s", reply.Address, expectedAddress)
 	}
 
-	reply2 := api.JsonAddress{}
+	reply2 := api.JSONAddress{}
 	if err = s.ImportKey(nil, &args, &reply2); err != nil {
 		t.Fatal(err)
 	}
@@ -1013,7 +1069,7 @@ func TestImportAVMKeyNoDuplicates(t *testing.T) {
 		Username: username,
 		Password: password,
 	}
-	addrsReply := api.JsonAddresses{}
+	addrsReply := api.JSONAddresses{}
 	if err := s.ListAddresses(nil, &addrsArgs, &addrsReply); err != nil {
 		t.Fatal(err)
 	}
@@ -1030,7 +1086,9 @@ func TestImportAVMKeyNoDuplicates(t *testing.T) {
 func TestSend(t *testing.T) {
 	genesisBytes, vm, s, _ := setupWithKeys(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
@@ -1049,13 +1107,13 @@ func TestSend(t *testing.T) {
 	_, fromAddrsStr := sampleAddrs(t, vm, addrs)
 
 	args := &SendArgs{
-		JsonSpendHeader: api.JsonSpendHeader{
+		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass: api.UserPass{
 				Username: username,
 				Password: password,
 			},
-			JsonFromAddrs:  api.JsonFromAddrs{From: fromAddrsStr},
-			JsonChangeAddr: api.JsonChangeAddr{ChangeAddr: changeAddrStr},
+			JSONFromAddrs:  api.JSONFromAddrs{From: fromAddrsStr},
+			JSONChangeAddr: api.JSONChangeAddr{ChangeAddr: changeAddrStr},
 		},
 		SendOutput: SendOutput{
 			Amount:  500,
@@ -1063,7 +1121,7 @@ func TestSend(t *testing.T) {
 			To:      addrStr,
 		},
 	}
-	reply := &api.JsonTxIDChangeAddr{}
+	reply := &api.JSONTxIDChangeAddr{}
 	vm.timer.Cancel()
 	if err := s.Send(nil, args, reply); err != nil {
 		t.Fatalf("Failed to send transaction: %s", err)
@@ -1076,7 +1134,7 @@ func TestSend(t *testing.T) {
 		t.Fatalf("Expected to find 1 pending tx after send, but found %d", len(pendingTxs))
 	}
 
-	if !reply.TxID.Equals(pendingTxs[0].ID()) {
+	if reply.TxID != pendingTxs[0].ID() {
 		t.Fatal("Transaction ID returned by Send does not match the transaction found in vm's pending transactions")
 	}
 }
@@ -1084,7 +1142,9 @@ func TestSend(t *testing.T) {
 func TestSendMultiple(t *testing.T) {
 	genesisBytes, vm, s, _ := setupWithKeys(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
@@ -1103,13 +1163,13 @@ func TestSendMultiple(t *testing.T) {
 	_, fromAddrsStr := sampleAddrs(t, vm, addrs)
 
 	args := &SendMultipleArgs{
-		JsonSpendHeader: api.JsonSpendHeader{
+		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass: api.UserPass{
 				Username: username,
 				Password: password,
 			},
-			JsonFromAddrs:  api.JsonFromAddrs{From: fromAddrsStr},
-			JsonChangeAddr: api.JsonChangeAddr{ChangeAddr: changeAddrStr},
+			JSONFromAddrs:  api.JSONFromAddrs{From: fromAddrsStr},
+			JSONChangeAddr: api.JSONChangeAddr{ChangeAddr: changeAddrStr},
 		},
 		Outputs: []SendOutput{
 			{
@@ -1124,7 +1184,7 @@ func TestSendMultiple(t *testing.T) {
 			},
 		},
 	}
-	reply := &api.JsonTxIDChangeAddr{}
+	reply := &api.JSONTxIDChangeAddr{}
 	vm.timer.Cancel()
 	if err := s.SendMultiple(nil, args, reply); err != nil {
 		t.Fatalf("Failed to send transaction: %s", err)
@@ -1137,7 +1197,7 @@ func TestSendMultiple(t *testing.T) {
 		t.Fatalf("Expected to find 1 pending tx after send, but found %d", len(pendingTxs))
 	}
 
-	if !reply.TxID.Equals(pendingTxs[0].ID()) {
+	if reply.TxID != pendingTxs[0].ID() {
 		t.Fatal("Transaction ID returned by SendMultiple does not match the transaction found in vm's pending transactions")
 	}
 
@@ -1149,7 +1209,9 @@ func TestSendMultiple(t *testing.T) {
 func TestCreateAndListAddresses(t *testing.T) {
 	_, vm, s, _ := setup(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 
@@ -1157,7 +1219,7 @@ func TestCreateAndListAddresses(t *testing.T) {
 		Username: username,
 		Password: password,
 	}
-	createReply := &api.JsonAddress{}
+	createReply := &api.JSONAddress{}
 
 	if err := s.CreateAddress(nil, createArgs, createReply); err != nil {
 		t.Fatalf("Failed to create address: %s", err)
@@ -1169,7 +1231,7 @@ func TestCreateAndListAddresses(t *testing.T) {
 		Username: username,
 		Password: password,
 	}
-	listReply := &api.JsonAddresses{}
+	listReply := &api.JSONAddresses{}
 
 	if err := s.ListAddresses(nil, listArgs, listReply); err != nil {
 		t.Fatalf("Failed to list addresses: %s", err)
@@ -1186,7 +1248,9 @@ func TestCreateAndListAddresses(t *testing.T) {
 func TestImportAVAX(t *testing.T) {
 	genesisBytes, vm, s, m := setupWithKeys(t)
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.ctx.Lock.Unlock()
 	}()
 	genesisTx := GetAVAXTxFromGenesisTest(genesisBytes, t)
@@ -1205,14 +1269,15 @@ func TestImportAVAX(t *testing.T) {
 			},
 		},
 	}
-	utxoBytes, err := vm.codec.Marshal(utxo)
+	utxoBytes, err := vm.codec.Marshal(codecVersion, utxo)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	peerSharedMemory := m.NewSharedMemory(platformChainID)
+	utxoID := utxo.InputID()
 	if err := peerSharedMemory.Put(vm.ctx.ChainID, []*atomic.Element{{
-		Key:   utxo.InputID().Bytes(),
+		Key:   utxoID[:],
 		Value: utxoBytes,
 		Traits: [][]byte{
 			addr0.Bytes(),
@@ -1233,7 +1298,7 @@ func TestImportAVAX(t *testing.T) {
 		SourceChain: "P",
 		To:          addrStr,
 	}
-	reply := &api.JsonTxID{}
+	reply := &api.JSONTxID{}
 	if err := s.ImportAVAX(nil, args, reply); err != nil {
 		t.Fatalf("Failed to import AVAX due to %s", err)
 	}
