@@ -4,6 +4,7 @@
 package network
 
 import (
+	"encoding/binary"
 	"math"
 	"net"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/formatting"
 	"github.com/ava-labs/avalanchego/utils/wrappers"
+	"github.com/ava-labs/avalanchego/version"
 )
 
 type peer struct {
@@ -58,7 +60,7 @@ type peer struct {
 	conn net.Conn
 
 	// version that the peer reported during the handshake
-	versionStr utils.AtomicInterface
+	versionStruct, versionStr utils.AtomicInterface
 
 	// unix time of the last message sent and received respectively
 	lastSent, lastReceived int64
@@ -214,17 +216,18 @@ func (p *peer) WriteMessages() {
 		atomic.AddInt64(&p.pendingBytes, -int64(len(msg)))
 		atomic.AddInt64(&p.net.pendingBytes, -int64(len(msg)))
 
-		packer := wrappers.Packer{Bytes: make([]byte, len(msg)+wrappers.IntLen)}
-		packer.PackBytes(msg)
-		msg = packer.Bytes
-		for len(msg) > 0 {
-			written, err := p.conn.Write(msg)
-			if err != nil {
-				p.net.log.Verbo("error writing to %s at %s due to: %s", p.id, p.getIP(), err)
-				return
+		msgb := [wrappers.IntLen]byte{}
+		binary.BigEndian.PutUint32(msgb[:], uint32(len(msg)))
+		for _, byteSlice := range [][]byte{msgb[:], msg} {
+			for len(byteSlice) > 0 {
+				written, err := p.conn.Write(byteSlice)
+				if err != nil {
+					p.net.log.Verbo("error writing to %s at %s due to: %s", p.id, p.getIP(), err)
+					return
+				}
+				p.tickerOnce.Do(p.StartTicker)
+				byteSlice = byteSlice[written:]
 			}
-			p.tickerOnce.Do(p.StartTicker)
-			msg = msg[written:]
 		}
 		atomic.StoreInt64(&p.lastSent, p.net.clock.Time().Unix())
 	}
@@ -328,6 +331,13 @@ func (p *peer) handle(msg Msg) {
 		}
 		return
 	}
+
+	peerVersion := p.versionStruct.GetValue().(version.Version)
+	if peerVersion.Before(minimumUnmaskedVersion) && time.Until(p.net.apricotPhase0Time) < 0 {
+		p.net.log.Verbo("dropping message from un-upgraded validator %s", p.id)
+		return
+	}
+
 	switch op {
 	case GetAcceptedFrontier:
 		p.getAcceptedFrontier(msg)
@@ -554,6 +564,7 @@ func (p *peer) version(msg Msg) {
 
 	p.SendPeerList()
 
+	p.versionStruct.SetValue(peerVersion)
 	p.versionStr.SetValue(peerVersion.String())
 	p.gotVersion.SetValue(true)
 
@@ -608,14 +619,21 @@ func (p *peer) acceptedFrontier(msg Msg) {
 	p.net.log.AssertNoError(err)
 	requestID := msg.Get(RequestID).(uint32)
 
-	containerIDs := ids.Set{}
-	for _, containerIDBytes := range msg.Get(ContainerIDs).([][]byte) {
+	containerIDsBytes := msg.Get(ContainerIDs).([][]byte)
+	containerIDs := make([]ids.ID, len(containerIDsBytes))
+	containerIDsSet := ids.Set{} // To prevent duplicates
+	for i, containerIDBytes := range containerIDsBytes {
 		containerID, err := ids.ToID(containerIDBytes)
 		if err != nil {
 			p.net.log.Debug("error parsing ContainerID 0x%x: %s", containerIDBytes, err)
 			return
 		}
-		containerIDs.Add(containerID)
+		if containerIDsSet.Contains(containerID) {
+			p.net.log.Debug("message contains duplicate of container ID %s", containerID)
+			return
+		}
+		containerIDs[i] = containerID
+		containerIDsSet.Add(containerID)
 	}
 
 	p.net.router.AcceptedFrontier(p.id, chainID, requestID, containerIDs)
@@ -628,14 +646,21 @@ func (p *peer) getAccepted(msg Msg) {
 	requestID := msg.Get(RequestID).(uint32)
 	deadline := p.net.clock.Time().Add(time.Duration(msg.Get(Deadline).(uint64)))
 
-	containerIDs := ids.Set{}
-	for _, containerIDBytes := range msg.Get(ContainerIDs).([][]byte) {
+	containerIDsBytes := msg.Get(ContainerIDs).([][]byte)
+	containerIDs := make([]ids.ID, len(containerIDsBytes))
+	containerIDsSet := ids.Set{} // To prevent duplicates
+	for i, containerIDBytes := range containerIDsBytes {
 		containerID, err := ids.ToID(containerIDBytes)
 		if err != nil {
 			p.net.log.Debug("error parsing ContainerID 0x%x: %s", containerIDBytes, err)
 			return
 		}
-		containerIDs.Add(containerID)
+		if containerIDsSet.Contains(containerID) {
+			p.net.log.Debug("message contains duplicate of container ID %s", containerID)
+			return
+		}
+		containerIDs[i] = containerID
+		containerIDsSet.Add(containerID)
 	}
 
 	p.net.router.GetAccepted(p.id, chainID, requestID, deadline, containerIDs)
@@ -647,14 +672,21 @@ func (p *peer) accepted(msg Msg) {
 	p.net.log.AssertNoError(err)
 	requestID := msg.Get(RequestID).(uint32)
 
-	containerIDs := ids.Set{}
-	for _, containerIDBytes := range msg.Get(ContainerIDs).([][]byte) {
+	containerIDsBytes := msg.Get(ContainerIDs).([][]byte)
+	containerIDs := make([]ids.ID, len(containerIDsBytes))
+	containerIDsSet := ids.Set{} // To prevent duplicates
+	for i, containerIDBytes := range containerIDsBytes {
 		containerID, err := ids.ToID(containerIDBytes)
 		if err != nil {
 			p.net.log.Debug("error parsing ContainerID 0x%x: %s", containerIDBytes, err)
 			return
 		}
-		containerIDs.Add(containerID)
+		if containerIDsSet.Contains(containerID) {
+			p.net.log.Debug("message contains duplicate of container ID %s", containerID)
+			return
+		}
+		containerIDs[i] = containerID
+		containerIDsSet.Add(containerID)
 	}
 
 	p.net.router.Accepted(p.id, chainID, requestID, containerIDs)
@@ -736,14 +768,21 @@ func (p *peer) chits(msg Msg) {
 	p.net.log.AssertNoError(err)
 	requestID := msg.Get(RequestID).(uint32)
 
-	containerIDs := ids.Set{}
-	for _, containerIDBytes := range msg.Get(ContainerIDs).([][]byte) {
+	containerIDsBytes := msg.Get(ContainerIDs).([][]byte)
+	containerIDs := make([]ids.ID, len(containerIDsBytes))
+	containerIDsSet := ids.Set{} // To prevent duplicates
+	for i, containerIDBytes := range containerIDsBytes {
 		containerID, err := ids.ToID(containerIDBytes)
 		if err != nil {
 			p.net.log.Debug("error parsing ContainerID 0x%x: %s", containerIDBytes, err)
 			return
 		}
-		containerIDs.Add(containerID)
+		if containerIDsSet.Contains(containerID) {
+			p.net.log.Debug("message contains duplicate of container ID %s", containerID)
+			return
+		}
+		containerIDs[i] = containerID
+		containerIDsSet.Add(containerID)
 	}
 
 	p.net.router.Chits(p.id, chainID, requestID, containerIDs)
@@ -755,8 +794,6 @@ func (p *peer) tryMarkConnected() {
 		p.gotVersion.GetValue() && // not waiting for version
 		p.gotPeerList.GetValue() && // not waiting for peerlist
 		!p.closed.GetValue() { // and not already disconnected
-
-		p.connected.SetValue(true)
 		p.net.connected(p)
 	}
 }
