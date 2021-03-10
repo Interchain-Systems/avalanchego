@@ -35,7 +35,7 @@ type multiLevelQueue struct {
 
 	currentTier int
 
-	msgManager MsgManager
+	maxPendingMsgs, pendingMessages, currentTier int
 
 	// CPU based prioritization
 	queues        []singleLevelQueue
@@ -60,12 +60,16 @@ func newMultiLevelQueue(
 	msgManager MsgManager,
 	consumptionRanges []float64,
 	consumptionAllotments []time.Duration,
-	bufferSize int,
-	log logging.Logger,
-	metrics *metrics,
+	maxPendingMsgs int,
+	maxNonStakerPendingMsgs uint32,
+	cpuInterval time.Duration,
+	msgPortion,
+	cpuPortion float64,
 ) (messageQueue, chan struct{}) {
-	semaChan := make(chan struct{}, bufferSize)
-	singleLevelSize := bufferSize / len(consumptionRanges)
+	semaChan := make(chan struct{}, maxPendingMsgs)
+	singleLevelSize := maxPendingMsgs / len(consumptionRanges)
+	cpuTracker := throttler.NewEWMATracker(vdrs, cpuPortion, cpuInterval, log)
+	msgThrottler := throttler.NewMessageThrottler(vdrs, uint32(maxPendingMsgs), maxNonStakerPendingMsgs, msgPortion, log)
 	queues := make([]singleLevelQueue, len(consumptionRanges))
 	for index := 0; index < len(queues); index++ {
 		gauge, histogram, err := metrics.registerTierStatistics(index)
@@ -82,14 +86,17 @@ func newMultiLevelQueue(
 	}
 
 	return &multiLevelQueue{
-		msgManager:    msgManager,
-		queues:        queues,
-		cpuRanges:     consumptionRanges,
-		cpuAllotments: consumptionAllotments,
-		log:           log,
-		metrics:       metrics,
-		bufferSize:    bufferSize,
-		semaChan:      semaChan,
+		validators:     vdrs,
+		cpuTracker:     cpuTracker,
+		msgThrottler:   msgThrottler,
+		queues:         queues,
+		cpuRanges:      consumptionRanges,
+		cpuAllotments:  consumptionAllotments,
+		cpuInterval:    cpuInterval,
+		log:            log,
+		metrics:        metrics,
+		maxPendingMsgs: int(maxPendingMsgs),
+		semaChan:       semaChan,
 	}, semaChan
 }
 
@@ -99,7 +106,28 @@ func (ml *multiLevelQueue) PushMessage(msg message) bool {
 	ml.lock.Lock()
 	defer ml.lock.Unlock()
 
-	return ml.pushMessage(msg)
+	// If the message queue is already full, skip iterating
+	// through the queue levels to return false
+	if ml.pendingMessages >= ml.maxPendingMsgs {
+		ml.log.Debug("Dropped message due to a full message queue with %d messages", ml.pendingMessages)
+		return false
+	}
+	// If the message was added successfully, increment the counting sema
+	// and notify the throttler of the pending message
+	if !ml.pushMessage(msg) {
+		ml.log.Verbo("Dropped message during push: %s", msg)
+		ml.metrics.dropped.Inc()
+		return false
+	}
+	ml.pendingMessages++
+	ml.msgThrottler.Add(msg.validatorID)
+	select {
+	case ml.semaChan <- struct{}{}:
+	default:
+		ml.log.Error("Sempahore channel was full after pushing message to the message queue")
+	}
+	ml.metrics.pending.Inc()
+	return true
 }
 
 // PopMessage attempts to read the next message from the queue

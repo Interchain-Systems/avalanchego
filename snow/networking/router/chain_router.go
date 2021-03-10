@@ -16,6 +16,7 @@ import (
 )
 
 const (
+	// Larger --> Higher weight for past in message throttler
 	defaultCPUInterval = 15 * time.Second
 )
 

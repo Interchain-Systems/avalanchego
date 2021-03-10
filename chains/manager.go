@@ -110,6 +110,7 @@ type chain struct {
 // ManagerConfig ...
 type ManagerConfig struct {
 	StakingEnabled          bool // True iff the network has staking enabled
+	MaxPendingMsgs          int
 	MaxNonStakerPendingMsgs uint32
 	StakerMSGPortion        float64
 	StakerCPUPortion        float64
@@ -474,7 +475,7 @@ func (m *manager) createAvalancheChain(
 		engine,
 		validators,
 		msgChan,
-		defaultChannelSize,
+		m.MaxPendingMsgs,
 		m.MaxNonStakerPendingMsgs,
 		m.StakerMSGPortion,
 		m.StakerCPUPortion,
@@ -561,7 +562,7 @@ func (m *manager) createSnowmanChain(
 		engine,
 		validators,
 		msgChan,
-		defaultChannelSize,
+		m.MaxPendingMsgs,
 		m.MaxNonStakerPendingMsgs,
 		m.StakerMSGPortion,
 		m.StakerCPUPortion,
