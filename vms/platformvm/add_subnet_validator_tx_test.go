@@ -19,7 +19,9 @@ func TestAddSubnetValidatorTxSyntacticVerify(t *testing.T) {
 	vm, _ := defaultVM()
 	vm.Ctx.Lock.Lock()
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.Ctx.Lock.Unlock()
 	}()
 
@@ -105,7 +107,7 @@ func TestAddSubnetValidatorTxSyntacticVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx.UnsignedTx.(*UnsignedAddSubnetValidatorTx).Validator.Subnet = ids.ID{ID: nil}
+	tx.UnsignedTx.(*UnsignedAddSubnetValidatorTx).Validator.Subnet = ids.ID{}
 	// This tx was syntactically verified when it was created...pretend it wasn't so we don't use cache
 	tx.UnsignedTx.(*UnsignedAddSubnetValidatorTx).syntacticallyVerified = false
 	if err := tx.UnsignedTx.(*UnsignedAddSubnetValidatorTx).Verify(
@@ -255,7 +257,9 @@ func TestAddSubnetValidatorTxSemanticVerify(t *testing.T) {
 	vm, _ := defaultVM()
 	vm.Ctx.Lock.Lock()
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.Ctx.Lock.Unlock()
 	}()
 
@@ -547,7 +551,9 @@ func TestAddSubnetValidatorMarshal(t *testing.T) {
 	vm, _ := defaultVM()
 	vm.Ctx.Lock.Lock()
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.Ctx.Lock.Unlock()
 	}()
 
@@ -565,9 +571,9 @@ func TestAddSubnetValidatorMarshal(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatal(err)
-	} else if txBytes, err := Codec.Marshal(tx); err != nil {
+	} else if txBytes, err := Codec.Marshal(codecVersion, tx); err != nil {
 		t.Fatal(err)
-	} else if err := Codec.Unmarshal(txBytes, &unmarshaledTx); err != nil {
+	} else if _, err := Codec.Unmarshal(txBytes, &unmarshaledTx); err != nil {
 		t.Fatal(err)
 	} else if err := unmarshaledTx.Sign(vm.codec, nil); err != nil {
 		t.Fatal(err)

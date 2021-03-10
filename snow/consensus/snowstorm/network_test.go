@@ -6,6 +6,8 @@ package snowstorm
 import (
 	"math/rand"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/choices"
@@ -17,7 +19,7 @@ import (
 type Network struct {
 	params         sbcon.Parameters
 	consumers      []*TestTx
-	nodeTxs        []map[[32]byte]*TestTx
+	nodeTxs        []map[ids.ID]*TestTx
 	nodes, running []Consensus
 }
 
@@ -42,16 +44,16 @@ func (n *Network) Initialize(
 
 	idCount := uint64(0)
 
-	colorMap := map[[32]byte]int{}
+	colorMap := map[ids.ID]int{}
 	colors := []ids.ID{}
 	for i := 0; i < numColors; i++ {
 		idCount++
 		color := ids.Empty.Prefix(idCount)
-		colorMap[color.Key()] = i
+		colorMap[color] = i
 		colors = append(colors, color)
 	}
 
-	count := map[[32]byte]int{}
+	count := map[ids.ID]int{}
 	for len(colors) > 0 {
 		selected := []ids.ID{}
 		s := sampler.NewUniform()
@@ -66,20 +68,18 @@ func (n *Network) Initialize(
 		}
 
 		for _, sID := range selected {
-			sKey := sID.Key()
-			newCount := count[sKey] + 1
-			count[sKey] = newCount
+			newCount := count[sID] + 1
+			count[sID] = newCount
 			if newCount >= maxInputConflicts {
-				i := colorMap[sKey]
+				i := colorMap[sID]
 				e := len(colorMap) - 1
 
 				eID := colors[e]
-				eKey := eID.Key()
 
-				colorMap[eKey] = i
+				colorMap[eID] = i
 				colors[i] = eID
 
-				delete(colorMap, sKey)
+				delete(colorMap, sID)
 				colors = colors[:e]
 			}
 		}
@@ -89,18 +89,21 @@ func (n *Network) Initialize(
 			IDV:     ids.Empty.Prefix(idCount),
 			StatusV: choices.Processing,
 		}}
-		tx.InputIDsV.Add(selected...)
+		tx.InputIDsV = append(tx.InputIDsV, selected...)
 
 		n.consumers = append(n.consumers, tx)
 	}
 }
 
-func (n *Network) AddNode(cg Consensus) {
-	cg.Initialize(snow.DefaultContextTest(), n.params)
+func (n *Network) AddNode(cg Consensus) error {
+	n.params.Metrics = prometheus.NewRegistry()
+	if err := cg.Initialize(snow.DefaultContextTest(), n.params); err != nil {
+		return err
+	}
 
 	n.shuffleConsumers()
 
-	txs := map[[32]byte]*TestTx{}
+	txs := map[ids.ID]*TestTx{}
 	for _, tx := range n.consumers {
 		newTx := &TestTx{
 			TestDecidable: choices.TestDecidable{
@@ -109,54 +112,63 @@ func (n *Network) AddNode(cg Consensus) {
 			},
 			InputIDsV: tx.InputIDs(),
 		}
-		txs[newTx.ID().Key()] = newTx
+		txs[newTx.ID()] = newTx
 
-		cg.Add(newTx)
+		if err := cg.Add(newTx); err != nil {
+			return err
+		}
 	}
 
 	n.nodeTxs = append(n.nodeTxs, txs)
 	n.nodes = append(n.nodes, cg)
 	n.running = append(n.running, cg)
+
+	return nil
 }
 
 func (n *Network) Finalized() bool {
 	return len(n.running) == 0
 }
 
-func (n *Network) Round() {
-	if len(n.running) > 0 {
-		runningInd := rand.Intn(len(n.running)) // #nosec G404
-		running := n.running[runningInd]
+func (n *Network) Round() error {
+	if len(n.running) == 0 {
+		return nil
+	}
 
-		s := sampler.NewUniform()
-		_ = s.Initialize(uint64(len(n.nodes)))
-		indices, _ := s.Sample(n.params.K)
-		sampledColors := ids.Bag{}
-		sampledColors.SetThreshold(n.params.Alpha)
-		for _, index := range indices {
-			peer := n.nodes[int(index)]
-			peerTxs := n.nodeTxs[int(index)]
+	runningInd := rand.Intn(len(n.running)) // #nosec G404
+	running := n.running[runningInd]
 
-			preferences := peer.Preferences()
-			for _, color := range preferences.List() {
-				sampledColors.Add(color)
-			}
-			for _, tx := range peerTxs {
-				if tx.Status() == choices.Accepted {
-					sampledColors.Add(tx.ID())
-				}
-			}
+	s := sampler.NewUniform()
+	_ = s.Initialize(uint64(len(n.nodes)))
+	indices, _ := s.Sample(n.params.K)
+	sampledColors := ids.Bag{}
+	sampledColors.SetThreshold(n.params.Alpha)
+	for _, index := range indices {
+		peer := n.nodes[int(index)]
+		peerTxs := n.nodeTxs[int(index)]
+
+		preferences := peer.Preferences()
+		for _, color := range preferences.List() {
+			sampledColors.Add(color)
 		}
-
-		running.RecordPoll(sampledColors)
-
-		// If this node has been finalized, remove it from the poller
-		if running.Finalized() {
-			newSize := len(n.running) - 1
-			n.running[runningInd] = n.running[newSize]
-			n.running = n.running[:newSize]
+		for _, tx := range peerTxs {
+			if tx.Status() == choices.Accepted {
+				sampledColors.Add(tx.ID())
+			}
 		}
 	}
+
+	if _, err := running.RecordPoll(sampledColors); err != nil {
+		return err
+	}
+
+	// If this node has been finalized, remove it from the poller
+	if running.Finalized() {
+		newSize := len(n.running) - 1
+		n.running[runningInd] = n.running[newSize]
+		n.running = n.running[:newSize]
+	}
+	return nil
 }
 
 func (n *Network) Disagreement() bool {
@@ -164,7 +176,7 @@ func (n *Network) Disagreement() bool {
 		accepted := false
 		rejected := false
 		for _, nodeTx := range n.nodeTxs {
-			tx := nodeTx[color.ID().Key()]
+			tx := nodeTx[color.ID()]
 			accepted = accepted || tx.Status() == choices.Accepted
 			rejected = rejected || tx.Status() == choices.Rejected
 		}
@@ -176,16 +188,16 @@ func (n *Network) Disagreement() bool {
 }
 
 func (n *Network) Agreement() bool {
-	statuses := map[[32]byte]choices.Status{}
+	statuses := map[ids.ID]choices.Status{}
 	for _, color := range n.consumers {
 		for _, nodeTx := range n.nodeTxs {
-			key := color.ID().Key()
-			tx := nodeTx[key]
-			prevStatus, exists := statuses[key]
+			colorID := color.ID()
+			tx := nodeTx[colorID]
+			prevStatus, exists := statuses[colorID]
 			if exists && prevStatus != tx.Status() {
 				return false
 			}
-			statuses[key] = tx.Status()
+			statuses[colorID] = tx.Status()
 		}
 	}
 	return !n.Disagreement()

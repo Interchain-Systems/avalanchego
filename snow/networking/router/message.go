@@ -20,12 +20,14 @@ type message struct {
 	containerID  ids.ID
 	container    []byte
 	containers   [][]byte
-	containerIDs ids.Set
+	containerIDs []ids.ID
 	notification common.Message
 	received     time.Time // Time this message was received
 	deadline     time.Time // Time this message must be responded to
 }
 
+// IsPeriodic returns true if this message is of a type that is sent on a
+// periodic basis.
 func (m message) IsPeriodic() bool {
 	return m.requestID == constants.GossipMsgRequestID ||
 		m.messageType == constants.GossipMsg

@@ -36,8 +36,8 @@ func (m *Manager) Dispatch() {
 }
 
 // RegisterChain ...
-func (m *Manager) RegisterChain(ctx *snow.Context, namespace string) {
-	m.benchlist.RegisterChain(ctx, namespace)
+func (m *Manager) RegisterChain(ctx *snow.Context, namespace string) error {
+	return m.benchlist.RegisterChain(ctx, namespace)
 }
 
 // Register request to time out unless Manager.Cancel is called
@@ -65,5 +65,5 @@ func createRequestID(validatorID ids.ShortID, chainID ids.ID, requestID uint32) 
 	p := wrappers.Packer{Bytes: make([]byte, wrappers.IntLen)}
 	p.PackInt(requestID)
 
-	return ids.NewID(hashing.ByteArraysToHash256Array(validatorID.Bytes(), chainID.Bytes(), p.Bytes))
+	return hashing.ByteArraysToHash256Array(validatorID.Bytes(), chainID[:], p.Bytes)
 }

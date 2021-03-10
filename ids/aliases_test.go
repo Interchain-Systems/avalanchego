@@ -1,4 +1,4 @@
-// (c) 2020, Alex Willmer. All rights reserved.
+// (c) 2019-2020, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package ids
@@ -23,7 +23,7 @@ func TestAliaserLookupError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.label, func(t *testing.T) {
 			res, err := tt.aliaser.Lookup(tt.alias)
-			if !tt.res.Equals(res) {
+			if tt.res != res {
 				t.Errorf("Got %v, expected %v", res, tt.res)
 			}
 			if err == nil {
@@ -34,22 +34,24 @@ func TestAliaserLookupError(t *testing.T) {
 }
 
 func TestAliaserLookup(t *testing.T) {
-	id := NewID([32]byte{'K', 'a', 't', 'e', ' ', 'K', 'a', 'n', 'e'})
+	id := ID{'K', 'a', 't', 'e', ' ', 'K', 'a', 'n', 'e'}
 	aliaser := Aliaser{}
 	aliaser.Initialize()
-	aliaser.Alias(id, "Batwoman")
+	if err := aliaser.Alias(id, "Batwoman"); err != nil {
+		t.Fatal(err)
+	}
 
 	res, err := aliaser.Lookup("Batwoman")
 	if err != nil {
 		t.Fatalf("Unexpected error %q", err)
 	}
-	if !id.Equals(res) {
+	if id != res {
 		t.Fatalf("Got %v, expected %v", res, id)
 	}
 }
 
 func TestAliaserAliasesEmpty(t *testing.T) {
-	id := NewID([32]byte{'J', 'a', 'm', 'e', 's', ' ', 'G', 'o', 'r', 'd', 'o', 'n'})
+	id := ID{'J', 'a', 'm', 'e', 's', ' ', 'G', 'o', 'r', 'd', 'o', 'n'}
 	aliaser := Aliaser{}
 	aliaser.Initialize()
 
@@ -60,11 +62,15 @@ func TestAliaserAliasesEmpty(t *testing.T) {
 }
 
 func TestAliaserAliases(t *testing.T) {
-	id := NewID([32]byte{'B', 'r', 'u', 'c', 'e', ' ', 'W', 'a', 'y', 'n', 'e'})
+	id := ID{'B', 'r', 'u', 'c', 'e', ' ', 'W', 'a', 'y', 'n', 'e'}
 	aliaser := Aliaser{}
 	aliaser.Initialize()
-	aliaser.Alias(id, "Batman")
-	aliaser.Alias(id, "Dark Knight")
+	if err := aliaser.Alias(id, "Batman"); err != nil {
+		t.Fatal(err)
+	}
+	if err := aliaser.Alias(id, "Dark Knight"); err != nil {
+		t.Fatal(err)
+	}
 
 	aliases := aliaser.Aliases(id)
 	expected := []string{"Batman", "Dark Knight"}
@@ -74,12 +80,16 @@ func TestAliaserAliases(t *testing.T) {
 }
 
 func TestAliaserPrimaryAlias(t *testing.T) {
-	id1 := NewID([32]byte{'J', 'a', 'm', 'e', 's', ' ', 'G', 'o', 'r', 'd', 'o', 'n'})
-	id2 := NewID([32]byte{'B', 'r', 'u', 'c', 'e', ' ', 'W', 'a', 'y', 'n', 'e'})
+	id1 := ID{'J', 'a', 'm', 'e', 's', ' ', 'G', 'o', 'r', 'd', 'o', 'n'}
+	id2 := ID{'B', 'r', 'u', 'c', 'e', ' ', 'W', 'a', 'y', 'n', 'e'}
 	aliaser := Aliaser{}
 	aliaser.Initialize()
-	aliaser.Alias(id2, "Batman")
-	aliaser.Alias(id2, "Dark Knight")
+	if err := aliaser.Alias(id2, "Batman"); err != nil {
+		t.Fatal(err)
+	}
+	if err := aliaser.Alias(id2, "Dark Knight"); err != nil {
+		t.Fatal(err)
+	}
 
 	res, err := aliaser.PrimaryAlias(id1)
 	if res != "" {
@@ -100,11 +110,13 @@ func TestAliaserPrimaryAlias(t *testing.T) {
 }
 
 func TestAliaserAliasClash(t *testing.T) {
-	id1 := NewID([32]byte{'B', 'r', 'u', 'c', 'e', ' ', 'W', 'a', 'y', 'n', 'e'})
-	id2 := NewID([32]byte{'D', 'i', 'c', 'k', ' ', 'G', 'r', 'a', 'y', 's', 'o', 'n'})
+	id1 := ID{'B', 'r', 'u', 'c', 'e', ' ', 'W', 'a', 'y', 'n', 'e'}
+	id2 := ID{'D', 'i', 'c', 'k', ' ', 'G', 'r', 'a', 'y', 's', 'o', 'n'}
 	aliaser := Aliaser{}
 	aliaser.Initialize()
-	aliaser.Alias(id1, "Batman")
+	if err := aliaser.Alias(id1, "Batman"); err != nil {
+		t.Fatal(err)
+	}
 
 	err := aliaser.Alias(id2, "Batman")
 	if err == nil {
@@ -113,12 +125,16 @@ func TestAliaserAliasClash(t *testing.T) {
 }
 
 func TestAliaserRemoveAlias(t *testing.T) {
-	id1 := NewID([32]byte{'B', 'r', 'u', 'c', 'e', ' ', 'W', 'a', 'y', 'n', 'e'})
-	id2 := NewID([32]byte{'J', 'a', 'm', 'e', 's', ' ', 'G', 'o', 'r', 'd', 'o', 'n'})
+	id1 := ID{'B', 'r', 'u', 'c', 'e', ' ', 'W', 'a', 'y', 'n', 'e'}
+	id2 := ID{'J', 'a', 'm', 'e', 's', ' ', 'G', 'o', 'r', 'd', 'o', 'n'}
 	aliaser := Aliaser{}
 	aliaser.Initialize()
-	aliaser.Alias(id1, "Batman")
-	aliaser.Alias(id1, "Dark Knight")
+	if err := aliaser.Alias(id1, "Batman"); err != nil {
+		t.Fatal(err)
+	}
+	if err := aliaser.Alias(id1, "Dark Knight"); err != nil {
+		t.Fatal(err)
+	}
 
 	aliaser.RemoveAliases(id1)
 

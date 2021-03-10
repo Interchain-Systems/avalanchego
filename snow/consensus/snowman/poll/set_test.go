@@ -10,6 +10,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/utils/wrappers"
 )
 
 func TestNewSetErrorOnMetrics(t *testing.T) {
@@ -18,14 +19,23 @@ func TestNewSetErrorOnMetrics(t *testing.T) {
 	namespace := ""
 	registerer := prometheus.NewRegistry()
 
-	registerer.Register(prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "polls",
-	}))
-	registerer.Register(prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "poll_duration",
-	}))
+	errs := wrappers.Errs{}
+	errs.Add(
+		registerer.Register(prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "polls",
+		})),
+		registerer.Register(prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "poll_duration",
+		})),
+	)
+	if errs.Errored() {
+		t.Fatal(errs.Err)
+	}
 
-	_ = NewSet(factory, log, namespace, registerer)
+	s := NewSet(factory, log, namespace, registerer)
+	if s == nil {
+		t.Fatalf("shouldn't have failed due to a metrics initialization err")
+	}
 }
 
 func TestCreateAndFinishSuccessfulPoll(t *testing.T) {
@@ -35,7 +45,7 @@ func TestCreateAndFinishSuccessfulPoll(t *testing.T) {
 	registerer := prometheus.NewRegistry()
 	s := NewSet(factory, log, namespace, registerer)
 
-	vtxID := ids.NewID([32]byte{1})
+	vtxID := ids.ID{1}
 
 	vdr1 := ids.NewShortID([20]byte{1})
 	vdr2 := ids.NewShortID([20]byte{2}) // k = 2
@@ -57,7 +67,7 @@ func TestCreateAndFinishSuccessfulPoll(t *testing.T) {
 	} else if s.Len() != 1 {
 		t.Fatalf("Should only have one active poll")
 	} else if _, finished := s.Vote(1, vdr1, vtxID); finished {
-		t.Fatalf("Shouldn't have been able to finish a non-existant poll")
+		t.Fatalf("Shouldn't have been able to finish a non-existent poll")
 	} else if _, finished := s.Vote(0, vdr1, vtxID); finished {
 		t.Fatalf("Shouldn't have been able to finish an ongoing poll")
 	} else if _, finished := s.Vote(0, vdr1, vtxID); finished {
@@ -66,7 +76,7 @@ func TestCreateAndFinishSuccessfulPoll(t *testing.T) {
 		t.Fatalf("Should have finished the")
 	} else if list := result.List(); len(list) != 1 {
 		t.Fatalf("Wrong number of vertices returned")
-	} else if retVtxID := list[0]; !retVtxID.Equals(vtxID) {
+	} else if retVtxID := list[0]; retVtxID != vtxID {
 		t.Fatalf("Wrong vertex returned")
 	} else if result.Count(vtxID) != 2 {
 		t.Fatalf("Wrong number of votes returned")
@@ -100,7 +110,7 @@ func TestCreateAndFinishFailedPoll(t *testing.T) {
 	} else if s.Len() != 1 {
 		t.Fatalf("Should only have one active poll")
 	} else if _, finished := s.Drop(1, vdr1); finished {
-		t.Fatalf("Shouldn't have been able to finish a non-existant poll")
+		t.Fatalf("Shouldn't have been able to finish a non-existent poll")
 	} else if _, finished := s.Drop(0, vdr1); finished {
 		t.Fatalf("Shouldn't have been able to finish an ongoing poll")
 	} else if _, finished := s.Drop(0, vdr1); finished {

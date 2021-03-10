@@ -18,7 +18,9 @@ func TestNewImportTx(t *testing.T) {
 	vm, baseDB := defaultVM()
 	vm.Ctx.Lock.Lock()
 	defer func() {
-		vm.Shutdown()
+		if err := vm.Shutdown(); err != nil {
+			t.Fatal(err)
+		}
 		vm.Ctx.Lock.Unlock()
 	}()
 
@@ -43,7 +45,10 @@ func TestNewImportTx(t *testing.T) {
 	fundedSharedMemory := func(amt uint64) atomic.SharedMemory {
 		*cnt++
 		m := &atomic.Memory{}
-		m.Initialize(logging.NoLog{}, prefixdb.New([]byte{*cnt}, baseDB))
+		err := m.Initialize(logging.NoLog{}, prefixdb.New([]byte{*cnt}, baseDB))
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		sm := m.NewSharedMemory(vm.Ctx.ChainID)
 		peerSharedMemory := m.NewSharedMemory(avmID)
@@ -64,13 +69,13 @@ func TestNewImportTx(t *testing.T) {
 				},
 			},
 		}
-		utxoBytes, err := Codec.Marshal(utxo)
+		utxoBytes, err := Codec.Marshal(codecVersion, utxo)
 		if err != nil {
 			panic(err)
 		}
-
+		inputID := utxo.InputID()
 		if err := peerSharedMemory.Put(vm.Ctx.ChainID, []*atomic.Element{{
-			Key:   utxo.InputID().Bytes(),
+			Key:   inputID[:],
 			Value: utxoBytes,
 			Traits: [][]byte{
 				recipientKey.PublicKey().Address().Bytes(),
