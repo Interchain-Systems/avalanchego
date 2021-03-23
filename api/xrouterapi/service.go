@@ -74,13 +74,6 @@ type GetTransactionReply struct {
 // GetTransaction
 func (service *XRouterService) GetTransaction(_ *http.Request, args *GetTransactionArgs, reply *GetTransactionReply) error {
 	service.log.Info("XRouter: GetTransaction called")
-	peerCount := GetConnectedPeersCount()
-	if (peerCount > args.NodeCount) {
-		reply.Error = "NODE COUNT IS TOO HIGH"
-		return nil
-	}
-
-
 	if uuid, xrouterReply, err := service.client.GetTransactionRaw(args.Blockchain, args.ID, args.NodeCount); err != nil {
 		service.log.Fatal("error: %v", err)
 		return err
@@ -183,14 +176,17 @@ type GetTransactionsReply struct {
 // GetTransactions
 func (service *XRouterService) GetTransactions(_ *http.Request, args *GetTransactionsArgs, reply *GetTransactionsReply) error {
 	service.log.Info("XRouter: GetTransactions called")
-	s := strings.Split(args.IDS, ",")
-	txids := make([]interface{}, len(s))
-	for i, v := range s {
-		service.log.Info("GetTransactions params index: %v", i)
-		service.log.Info("GetTransactions params value: %v", v)
-		txids[i] = v
+	peerCount := GetConnectedPeersCount()
+	if peerCount >  args.NodeCount {
+		reply.Error = "Error: Node count too high"
+		return nil
 	}
-	if uuid, xrouterReply, err := service.client.GetTransactionsRaw(args.Blockchain, txids, args.NodeCount); err != nil {
+	s := strings.Split(args.IDS, ",")
+	params := make([]interface{}, len(s))
+	for i, v := range s {
+		params[i] = v
+	}
+	if uuid, xrouterReply, err := service.client.GetTransactionsRaw(args.Blockchain, params, args.NodeCount); err != nil {
 		service.log.Fatal("error: %v", err)
 		return err
 	} else {
@@ -209,6 +205,11 @@ func (service *XRouterService) GetTransactions(_ *http.Request, args *GetTransac
 		return nil
 	}
 }
+// GetConnectedPeersCount
+func (service *XRouterService) GetConnectedPeersCount() int {
+	xrouterReply := service.client.ConnectedCount()
+	return int(xrouterReply)
+}
 
 // GetConnectedPeers
 type GetConnectedPeersReply struct {
@@ -223,10 +224,7 @@ func (service *XRouterService) GetConnectedPeers(_ *http.Request, _ *struct{}, r
 	return nil
 }
 
-func (service *XRouterService) GetConnectedPeersCount() {
-	xrouterReply := service.client.ConnectedCount()
-	return int(xrouterReply)
-}
+
 
 // GetBlockCount
 type GetBlockCountArgs struct {
