@@ -74,6 +74,13 @@ type GetTransactionReply struct {
 // GetTransaction
 func (service *XRouterService) GetTransaction(_ *http.Request, args *GetTransactionArgs, reply *GetTransactionReply) error {
 	service.log.Info("XRouter: GetTransaction called")
+	peerCount := GetConnectedPeersCount()
+	if (peerCount > args.NodeCount) {
+		reply.Error = "NODE COUNT IS TOO HIGH"
+		return nil
+	}
+
+
 	if uuid, xrouterReply, err := service.client.GetTransactionRaw(args.Blockchain, args.ID, args.NodeCount); err != nil {
 		service.log.Fatal("error: %v", err)
 		return err
@@ -177,11 +184,13 @@ type GetTransactionsReply struct {
 func (service *XRouterService) GetTransactions(_ *http.Request, args *GetTransactionsArgs, reply *GetTransactionsReply) error {
 	service.log.Info("XRouter: GetTransactions called")
 	s := strings.Split(args.IDS, ",")
-	params := make([]interface{}, len(s))
+	txids := make([]interface{}, len(s))
 	for i, v := range s {
-		params[i] = v
+		service.log.Info("GetTransactions params index: %v", i)
+		service.log.Info("GetTransactions params value: %v", v)
+		txids[i] = v
 	}
-	if uuid, xrouterReply, err := service.client.GetTransactionsRaw(args.Blockchain, params, args.NodeCount); err != nil {
+	if uuid, xrouterReply, err := service.client.GetTransactionsRaw(args.Blockchain, txids, args.NodeCount); err != nil {
 		service.log.Fatal("error: %v", err)
 		return err
 	} else {
@@ -212,6 +221,11 @@ func (service *XRouterService) GetConnectedPeers(_ *http.Request, _ *struct{}, r
 	xrouterReply := service.client.ConnectedCount()
 	reply.Reply = strconv.Itoa(int(xrouterReply))
 	return nil
+}
+
+func (service *XRouterService) GetConnectedPeersCount() {
+	xrouterReply := service.client.ConnectedCount()
+	return int(xrouterReply)
 }
 
 // GetBlockCount
