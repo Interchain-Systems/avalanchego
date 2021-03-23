@@ -176,6 +176,11 @@ type GetTransactionsReply struct {
 // GetTransactions
 func (service *XRouterService) GetTransactions(_ *http.Request, args *GetTransactionsArgs, reply *GetTransactionsReply) error {
 	service.log.Info("XRouter: GetTransactions called")
+	peerCount := GetConnectedPeersCount()
+	if peerCount >  args.NodeCount {
+		reply.Error = "Error: Node count too high"
+		return nil
+	}
 	s := strings.Split(args.IDS, ",")
 	params := make([]interface{}, len(s))
 	for i, v := range s {
@@ -200,6 +205,11 @@ func (service *XRouterService) GetTransactions(_ *http.Request, args *GetTransac
 		return nil
 	}
 }
+// GetConnectedPeersCount
+func (service *XRouterService) GetConnectedPeersCount() int {
+	xrouterReply := service.client.ConnectedCount()
+	return int(xrouterReply)
+}
 
 // GetConnectedPeers
 type GetConnectedPeersReply struct {
@@ -213,6 +223,8 @@ func (service *XRouterService) GetConnectedPeers(_ *http.Request, _ *struct{}, r
 	reply.Reply = strconv.Itoa(int(xrouterReply))
 	return nil
 }
+
+
 
 // GetBlockCount
 type GetBlockCountArgs struct {
